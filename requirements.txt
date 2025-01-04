@@ -1,0 +1,23 @@
+# Telegram Bot
+aiogram>=3.2.0
+aiohttp>=3.9.0
+
+# RabbitMQ
+aio-pika>=9.3.1
+
+# Image Processing
+opencv-python-headless>=4.8.1.78
+Pillow>=10.0.1
+
+# Environment Variables
+python-dotenv>=1.0.0
+
+# Testing
+pytest>=7.4.2
+pytest-mock>=3.11.1
+
+# Linters and Code Quality
+flake8>=6.1.0
+black>=23.9.1
+isort>=5.12.0
+mypy>=1.5.1
