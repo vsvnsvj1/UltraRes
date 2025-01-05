@@ -1,1 +1,6 @@
 .env
+venv/
+__pycache__/
+results/
+uploads/
+conftest.py
