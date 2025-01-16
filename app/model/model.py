@@ -48,6 +48,12 @@ class RRDB(nn.Module):
         self.rdb2 = ResidualDenseBlock(num_feat, num_grow_ch)
         self.rdb3 = ResidualDenseBlock(num_feat, num_grow_ch)
     
+    def forward(self, x):
+        out = self.rdb1(x)
+        out = self.rdb2(out)
+        out = self.rdb3(out)
+        return out * 0.2 + x
+    
     
 
 
