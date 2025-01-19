@@ -13,7 +13,8 @@ from config import (
     QUEUE_PROCESS_IMAGE,
     QUEUE_RESULT
 )
-
+from io import BytesIO
+from aiogram.types import BufferedInputFile
 logger = logging.getLogger(__name__)
 
 class ImageProducer:
@@ -27,8 +28,10 @@ class ImageProducer:
         self._consume_task = None
 
     async def connect(self) -> None:
+        """
+        Устанавливает соединение с RabbitMQ.
+        """
         try:
-            # Подключаемся к RabbitMQ
             self.connection = await aio_pika.connect_robust(
                 host=RABBITMQ_HOST,
                 port=RABBITMQ_PORT,
@@ -37,45 +40,26 @@ class ImageProducer:
                 virtualhost=RABBITMQ_VHOST
             )
             self.channel = await self.connection.channel()
-            
-            # Объявляем очереди
-            self.queue_process = await self.channel.declare_queue(
-                self.queue_process,
-                durable=True
-            )
-            self.queue_result = await self.channel.declare_queue(
-                self.queue_result,
-                durable=True
-            )
-
-            # Запускаем получение сообщений в отдельной задаче
-            self._consuming = True
-            self._consume_task = asyncio.create_task(self.start_consuming())
-            
             logger.info("Подключение к RabbitMQ установлено")
         except Exception as e:
             logger.error(f"Ошибка при подключении к RabbitMQ: {e}")
             raise e
-
-    async def start_consuming(self):
-        try:
-            while self._consuming:
-                try:
-                    async with self.queue_result.iterator() as queue_iter:
-                        async for message in queue_iter:
-                            if not self._consuming:
-                                break
-                            await self.process_result(message)
-                except aio_pika.exceptions.ChannelClosed:
-                    if self._consuming:
-                        await asyncio.sleep(1)  # Пауза перед повторным подключением
-                        continue
-                    break
-        except Exception as e:
-            logger.error(f"Ошибка в цикле получения сообщений: {e}")
-            
+        
     async def close(self) -> None:
-        """Корректное закрытие соединения с RabbitMQ"""
+        """
+        Корректное закрытие соединения с RabbitMQ
+        """
+        try:
+            if self.channel and not self.channel.is_closed:
+                await self.channel.close()
+            if self.connection and not self.connection.is_closed:
+                await self.connection.close()
+            logger.info("Соединение с RabbitMQ закрыто")
+        except Exception as e:
+            logger.error(f"Ошибка при закрытии соединения с RabbitMQ: {e}")
+
+            
+        '''
         try:
             # Останавливаем получение сообщений
             self._consuming = False
@@ -95,16 +79,24 @@ class ImageProducer:
             logger.info("Соединение с RabbitMQ корректно закрыто")
         except Exception as e:
             logger.error(f"Ошибка при закрытии соединения с RabbitMQ: {e}")
-
+        '''
     
-    async def send_image(self, image_path: str, user_id: int) -> None:
+    async def send_image(self, image_bytes: str, chat_id: int) -> None:
+        """
+        Отправляет байтовое изображение в очередь RabbitMQ.
+
+        Args:
+            image_bytes (bytes): Байты изображения.
+            chat_id (int): ID чата для отправки результата.
+        """
+        
         try:
             if not self.channel:
-                await self.connect()
-                
+                raise ConnectionError("Канал RabbitMQ не установлен.")
+               
             message = {
-                "image_path": image_path,
-                "user_id": user_id
+                "chat_id": chat_id,
+                "image_data": image_bytes.hex()
             }
             
             await self.channel.default_exchange.publish(
@@ -115,41 +107,41 @@ class ImageProducer:
                 routing_key=self.queue_process
             )
             
-            logger.info(f"Изображение {image_path} отправлено в очередь для пользователя {user_id}")
-            
+            logger.info(f"Изображение отправлено в очередь для чата {chat_id}")
         except Exception as e:
             logger.error(f"Ошибка отправки изображения в очередь: {e}")
             raise e
 
-    async def process_result(self, message: aio_pika.IncomingMessage):
-        async with await message.process():
-            try:
-                body = json.loads(message.body.decode())
-                user_id = body['user_id']
-                result_image_path = body['result_image_path']
+    async def process_result(self) -> None:
+        """
+        Подписывается на очередь и обрабатывает результаты обработки изображений.
+        """
+        if not self.channel:
+            raise ConnectionError("Канал RabbitMQ не установлен.")
+        
+        queue = await self.channel.declare_queue(self.queue_result, durable=True)
+        logger.info("Подписан на очередь результатов")
+        async for message in queue:
+            async with message.process():
+                try:
+                    chat_id = message.headers.get("chat_id")
+                    if not chat_id:
+                        raise ValueError("Отсутствует chat_id в заголовках.")
+                    
+                    processed_image = message.body
+                    image_file = BufferedInputFile(processed_image, filename="processed_image.jpg")
+                    await self.bot.send_photo(chat_id=chat_id, photo=image_file, caption="Вот ваше обработанное изображение!")
+                    logger.info(f"Изображение успешно отправлено в чат {chat_id}")
+                except Exception as e:
+                    logger.error(f"Ошибка при обработке результата: {e}")
 
-                # Отправляем обработанное изображение пользователю
-                await self.bot.send_photo(
-                    chat_id=user_id,
-                    photo=open(result_image_path, 'rb'),
-                    caption="Вот ваше обработанное изображение!"
-                )
-                logger.info(f"Обработанное изображение отправлено пользователю {user_id}")
-
-            except Exception as e:
-                logger.error(f"Ошибка при обработке результата: {e}")
-                if 'user_id' in locals():
-                    await self.bot.send_message(
-                        user_id,
-                        "Извините, произошла ошибка при отправке обработанного изображения."
-                    )
 
     async def start_consuming(self):
+        """
+        Функция подписки на очередь результатов и запуска обработки сообщений.
+        """
         try:
-            # Настраиваем получение сообщений из очереди результатов
-            async with self.queue_result.iterator() as queue_iter:
-                async for message in queue_iter:
-                    await self.process_result(message)
+            await self.process_result()
         except Exception as e:
-            logger.error(f"Ошибка при получении результатов: {e}")
+            logger.error(f"Ошибка при подписке на очередь: {e}")
             

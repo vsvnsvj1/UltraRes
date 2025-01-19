@@ -4,7 +4,6 @@ import cv2
 import json
 import logging
 import numpy as np
-import torch
 from app.model.model import RRDBNet
 from app.model.real_esrgan_inference import RESRGANinf
 from config import (
@@ -14,9 +13,16 @@ from config import (
     RABBITMQ_PASSWORD,
     RABBITMQ_VHOST,
     QUEUE_PROCESS_IMAGE,
-    QUEUE_RESULT
+    QUEUE_RESULT,
+    LOG_LEVEL
 )
 
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL, logging.INFO), 
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+'''
 # Настройка логгирования
 logging.basicConfig(
     level=logging.INFO,
@@ -24,14 +30,14 @@ logging.basicConfig(
     handlers=[logging.StreamHandler()]
 )
 logger = logging.getLogger(__name__)
+'''
 
-# Загрузка модели
-MODEL_PATH = 'app/model/RealESRGAN_x4plus.pth'
 
 async def load_model(device=None):
     """
     Загружает модель для обработки изображений.
     """
+    MODEL_PATH = 'app/model/RealESRGAN_x4plus.pth'
     logger.info("Загрузка модели Real-ESRGAN...")
     model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=4)
     upsmpl = RESRGANinf(scale=4, model=model, model_path=MODEL_PATH, device=device, pad=10)
