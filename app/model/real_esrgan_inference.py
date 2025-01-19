@@ -59,6 +59,7 @@ class RESRGANinf:
             
         return self.img
     
+
     def inference(self):
         self.output = self.model(self.img)
         
@@ -97,17 +98,18 @@ class RESRGANinf:
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             
         self.pre_process(img)
+
         self.inference()
         output_img = self.post_process()
         output_img = output_img.data.squeeze().float().cpu().clamp_(0, 1).numpy()
         output_img = np.transpose(output_img[[2, 1, 0], :, :], (1, 2, 0))
+        
         if img_mode == 'L':
             output_img = cv2.cvtColor(output_img, cv2.COLOR_BGR2GRAY)
         
         if img_mode == 'RGBA':
             if alpha_upsampler == 'realesrgan':
                 self.pre_process(alpha)
-            
                 self.inference()
                 output_alpha = self.post_process()
                 output_alpha = output_alpha.data.squeeze().float().cpu().clamp_(0, 1).numpy()
@@ -116,7 +118,10 @@ class RESRGANinf:
             else:  # use the cv2 resize for alpha channel
                 h, w = alpha.shape[0:2]
                 output_alpha = cv2.resize(alpha, (w * self.scale, h * self.scale), interpolation=cv2.INTER_LINEAR)
-
+            self.img = None
+            self.output = None
+            import gc
+            gc.collect() 
             # merge the alpha channel
             output_img = cv2.cvtColor(output_img, cv2.COLOR_BGR2BGRA)
             output_img[:, :, 3] = output_alpha
