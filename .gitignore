@@ -4,3 +4,4 @@ __pycache__/
 results/
 uploads/
 conftest.py
+.DS_Store
