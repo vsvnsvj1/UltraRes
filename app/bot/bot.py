@@ -2,15 +2,16 @@ from aiogram import Bot, Dispatcher, types, F
 from aiogram.types import ContentType
 from aiogram.filters import Command
 import asyncio
-import signal
 import os
-from config import TELEGRAM_BOT_TOKEN, UPLOAD_DIR
-from .producer import ImageProducer
 import logging
+from config import TELEGRAM_BOT_TOKEN, UPLOAD_DIR, DEBUG, LOG_LEVEL
+from .producer import ImageProducer
 
-# Настройка логирования
+
+
+
 logging.basicConfig(
-    level=logging.INFO,
+    level=getattr(logging, LOG_LEVEL, logging.INFO), 
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
@@ -18,6 +19,8 @@ logger = logging.getLogger(__name__)
 # Инициализация бота и диспетчера
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
 dp = Dispatcher()
+
+# Иницилизация продюсера
 producer = ImageProducer(bot)
 
 @dp.message(Command('start'))
@@ -49,29 +52,29 @@ async def handle_photo(message: types.Message):
         processing_msg = await message.reply(
             "📥 Получил ваше изображение. Начинаю обработку..."
         )
-
-        # Получаем информацию о фото (берем максимальное разрешение)
+        
         photo = message.photo[-1]
+        image_bytes = await bot.download(photo.file_id)
+        image_bytes = image_bytes.read()
+    
         
-        # Создаем уникальное имя файла
-        file_name = f"{message.from_user.id}_{photo.file_id}.jpg"
-        file_path = os.path.join(UPLOAD_DIR, file_name)
+        if DEBUG:
+            os.makedirs(UPLOAD_DIR, exist_ok=True)
+            file_info = await bot.get_file(photo.file_id)
+            file_extension = os.path.splitext(file_info.file_path)[1] or ".jpg"
+            file_name = f"{message.from_user.id}_{photo.file_id}{file_extension}"
+            file_path = os.path.join(UPLOAD_DIR, file_name)
+            with open(file_path, "wb") as f:
+                f.write(image_bytes)
+            logger.debug(f"Изображение сохранено в {file_path}")
         
-        # Скачиваем фото
-        await bot.download(
-            photo.file_id,
-            destination=file_path
-        )
-        
-        # Отправляем в очередь
-        await producer.send_image(file_path, message.from_user.id)
-        
-        # Обновляем сообщение о статусе
+        await producer.send_image(image_bytes, message.from_user.id)
+
         await processing_msg.edit_text(
             "🔄 Изображение отправлено на обработку.\n"
             "⏳ Я пришлю результат, как только он будет готов."
         )
-
+        
     except Exception as e:
         error_msg = f"❌ Произошла ошибка при обработке изображения: {str(e)}"
         logger.error(error_msg)
@@ -86,69 +89,17 @@ async def handle_unknown(message: types.Message):
     )
 
 async def main():
-    # Создаем директорию для загрузок, если её нет
     os.makedirs(UPLOAD_DIR, exist_ok=True)
-    
-    # Создаем объект для отслеживания завершения
-    stop = asyncio.Event()
-    
-    async def shutdown():
-        """Корректное завершение всех соединений"""
-        logger.info("Начинаю процесс завершения работы...")
-        
-        # Останавливаем поллинг бота
-        stop.set()
-        
-        try:
-            # Закрываем соединение с RabbitMQ
-            await producer.close()
-        except Exception as e:
-            logger.error(f"Ошибка при закрытии RabbitMQ: {e}")
-        
-        try:
-            # Закрываем сессию бота
-            await bot.session.close()
-        except Exception as e:
-            logger.error(f"Ошибка при закрытии сессии бота: {e}")
-        
-        logger.info("Бот успешно остановлен")
-
-    def signal_handler(signame):
-        """Обработчик сигналов"""
-        logger.info(f"Получен сигнал завершения: {signame}")
-        # Запускаем завершение в event loop
-        asyncio.create_task(shutdown())
-
-    # Регистрируем обработчики сигналов
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop = asyncio.get_running_loop()
-        loop.add_signal_handler(
-            sig,
-            lambda s=sig: signal_handler(s)
-        )
-
-    try:
-        # Подключаемся к RabbitMQ
-        await producer.connect()
-        
-        logger.info("Бот запущен")
-        
-        # Запускаем поллинг с таймаутом
-        await dp.start_polling(
-            bot,
-            stop_event=stop,
-            polling_timeout=30  # Добавляем таймаут
-        )
-    except Exception as e:
-        logger.error(f"Ошибка при работе бота: {e}")
-        raise
-    finally:
-        await shutdown()
+    await producer.connect()
+    # Запускаем подписку на результаты
+    asyncio.create_task(producer.process_result())
+    await dp.start_polling(bot)
 
 if __name__ == '__main__':
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
+        producer.close()
         logger.info("Получен KeyboardInterrupt")
     except Exception as e:
         logger.error(f"Критическая ошибка: {e}")
