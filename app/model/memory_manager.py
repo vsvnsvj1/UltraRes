@@ -1,5 +1,5 @@
 import torch
-import numpy as np
+import math
 import psutil
 
 
@@ -65,12 +65,4 @@ class MemoryManager:
         """
         pixel_count = self.__calculate_pixel_count(batch, channel, width, height)
         required_memory_kb = pixel_count * self.pixel_cost_kb
-        return int(np.ceil(required_memory_kb / self.memory_limit_kb))
-
-    def log_device_info(self):
-        """
-        Вывод информации об устройстве и памяти.
-        """
-        print(f"Device: {self.device}")
-        print(f"Memory Limit (KB): {self.memory_limit_kb:.2f}")
-        print(f"Pixel Cost (KB): {self.pixel_cost_kb:.6f}")
+        return math.ceil(required_memory_kb / self.memory_limit_kb)

@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from torch.nn import functional as F
 import cv2
-
+from app.model.memory_manager import MemoryManager
 
 class RESRGANinf:
     
@@ -11,9 +11,13 @@ class RESRGANinf:
                  model=None,
                  model_path=None,
                  device=None,
-                 pad=10
+                 calc_tiles = False,
+                 tile_pad = 10,
+                 pad=10,
+                 pixel_size_kb = 50
                  ) -> None:
-        
+        self.calc_tiles = calc_tiles
+        self.tile_pad = tile_pad
         self.scale = scale
         self.pad = pad
         self.mod_scale = None
@@ -34,6 +38,8 @@ class RESRGANinf:
         
         model.eval()
         self.model = model.to(self.device)
+        
+        self.memory_manager = MemoryManager(pixel_cost_kb=pixel_size_kb, device=self.device) if calc_tiles else None
     
     
     def pre_process(self, img):
@@ -59,6 +65,71 @@ class RESRGANinf:
             
         return self.img
     
+    def tile_inference(self, tile_size):
+        batch, channel, height, width = self.img.shape
+        output_height = height * self.scale
+        output_width = width * self.scale
+        output_shape = (batch, channel, output_height, output_width)
+        
+        # Calculate count of tiles, depends on available memory
+        #tile_size = self.memory_manager.calculate_tile_count(batch, channel, height, width)
+        print(f'tile count {tile_size}')
+
+        # start with black image
+        self.output = self.img.new_zeros(output_shape)
+        tiles_x = int(np.ceil(width / tile_size))
+        tiles_y = int(np.ceil(height / tile_size))
+        print(tiles_x, tiles_y)
+
+        # loop over all tiles
+        for y in range(tiles_y):
+            for x in range(tiles_x):
+                # extract tile from input image
+                ofs_x = x * tile_size
+                ofs_y = y * tile_size
+                # input tile area on total image
+                input_start_x = ofs_x
+                input_end_x = min(ofs_x + tile_size, width)
+                input_start_y = ofs_y
+                input_end_y = min(ofs_y + tile_size, height)
+
+                # input tile area on total image with padding
+                input_start_x_pad = max(input_start_x - self.tile_pad, 0)
+                input_end_x_pad = min(input_end_x + self.tile_pad, width)
+                input_start_y_pad = max(input_start_y - self.tile_pad, 0)
+                input_end_y_pad = min(input_end_y + self.tile_pad, height)
+
+                # input tile dimensions
+                input_tile_width = input_end_x - input_start_x
+                input_tile_height = input_end_y - input_start_y
+                tile_idx = y * tiles_x + x + 1
+                input_tile = self.img[:, :, input_start_y_pad:input_end_y_pad, input_start_x_pad:input_end_x_pad]
+
+                # upscale tile
+                try:
+                    with torch.no_grad():
+                        output_tile = self.model(input_tile)
+                except RuntimeError as error:
+                    print('Error', error)
+                if tile_idx % 1000 == 0:
+                    print(f'\tTile {tile_idx}/{tiles_x * tiles_y}')
+
+                # output tile area on total image
+                output_start_x = input_start_x * self.scale
+                output_end_x = input_end_x * self.scale
+                output_start_y = input_start_y * self.scale
+                output_end_y = input_end_y * self.scale
+
+                # output tile area without padding
+                output_start_x_tile = (input_start_x - input_start_x_pad) * self.scale
+                output_end_x_tile = output_start_x_tile + input_tile_width * self.scale
+                output_start_y_tile = (input_start_y - input_start_y_pad) * self.scale
+                output_end_y_tile = output_start_y_tile + input_tile_height * self.scale
+
+                # put tile into output image
+                self.output[:, :, output_start_y:output_end_y,
+                            output_start_x:output_end_x] = output_tile[:, :, output_start_y_tile:output_end_y_tile,
+                                                                       output_start_x_tile:output_end_x_tile]
 
     def inference(self):
         self.output = self.model(self.img)
@@ -98,8 +169,15 @@ class RESRGANinf:
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             
         self.pre_process(img)
-
-        self.inference()
+        
+        batch, channel, height, width = self.img.shape
+        tile_size = self.memory_manager.calculate_tile_count(batch, channel, height, width)
+        
+        if self.calc_tiles == True and tile_size > 1:
+            
+            self.tile_inference(tile_size * 2 if tile_size > 5 else 10)
+        else:   
+            self.inference()
         output_img = self.post_process()
         output_img = output_img.data.squeeze().float().cpu().clamp_(0, 1).numpy()
         output_img = np.transpose(output_img[[2, 1, 0], :, :], (1, 2, 0))
@@ -120,8 +198,8 @@ class RESRGANinf:
                 output_alpha = cv2.resize(alpha, (w * self.scale, h * self.scale), interpolation=cv2.INTER_LINEAR)
             self.img = None
             self.output = None
-            import gc
-            gc.collect() 
+        
+           
             # merge the alpha channel
             output_img = cv2.cvtColor(output_img, cv2.COLOR_BGR2BGRA)
             output_img[:, :, 3] = output_alpha

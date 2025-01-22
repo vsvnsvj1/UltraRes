@@ -40,7 +40,7 @@ async def load_model(device=None):
     MODEL_PATH = 'app/model/RealESRGAN_x4plus.pth'
     logger.info("Загрузка модели Real-ESRGAN...")
     model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=4)
-    upsmpl = RESRGANinf(scale=4, model=model, model_path=MODEL_PATH, device=device, pad=10)
+    upsmpl = RESRGANinf(scale=4, model=model, model_path=MODEL_PATH, device=device,calc_tiles=True, tile_pad=10, pad=10)
     logger.info("Модель успешно загружена.")
     return upsmpl
 
@@ -86,11 +86,15 @@ async def main():
     model = await load_model()
     logger.info("Подключение к RabbitMQ...")
     connection = await aio_pika.connect_robust(
-        f"amqp://{RABBITMQ_USER}:{RABBITMQ_PASSWORD}@{RABBITMQ_HOST}:{RABBITMQ_PORT}/{RABBITMQ_VHOST}"
+        f"amqp://{RABBITMQ_USER}:{RABBITMQ_PASSWORD}@{RABBITMQ_HOST}:{RABBITMQ_PORT}/{RABBITMQ_VHOST}",
+        client_properties={
+            "connection_timeout": 300,  # Увеличенный тайм-аут соединения
+            "heartbeat": 120,           # Увеличенный heartbeat
+        },
     )
     async with connection:
         logger.info("Подключение к RabbitMQ успешно установлено.")
-        channel = await connection.channel()
+        channel = await connection.channel(publisher_confirms=True)
 
         # Объявление очередей
         input_queue = await channel.declare_queue(QUEUE_PROCESS_IMAGE, durable=True)
@@ -126,7 +130,7 @@ async def main():
                     )
                     logger.info("Изображение успешно обработано и отправлено в выходную очередь.")
                 except Exception as e:
-                    logger.error(f"Ошибка при обработке сообщения: {e}")
+                    logger.error(f"Ошибка при обработке сообщения: {e}",exc_info=True)
 
         await input_queue.consume(on_message)
         logger.info("Сервис обработки изображений запущен и ожидает сообщений.")
