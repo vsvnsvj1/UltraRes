@@ -1,8 +1,11 @@
 import numpy as np
+import logging
+import cv2
 import torch
 from torch.nn import functional as F
-import cv2
 from app.model.memory_manager import MemoryManager
+
+logger = logging.getLogger(__name__)
 
 class RESRGANinf:
     
@@ -31,7 +34,9 @@ class RESRGANinf:
                 self.device = torch.device("cpu")
         else:
             self.device = torch.device(f"{device}")
+            
         
+        logger.debug(f"Loading model from {model_path}...")
         model_loader = torch.load(model_path, map_location= torch.device("cpu"), weights_only=True)
         keyname = 'params_ema' if 'params_ema' in model_loader else 'params'
         model.load_state_dict(model_loader[keyname], strict=True)
@@ -40,10 +45,16 @@ class RESRGANinf:
         self.model = model.to(self.device)
         
         self.memory_manager = MemoryManager(pixel_cost_kb=pixel_size_kb, device=self.device) if calc_tiles else None
+        
+       
+        logger.debug(
+            f"Initialized RESRGANinf with scale={self.scale}, device={self.device}, "
+            f"calc_tiles={self.calc_tiles}, tile_pad={self.tile_pad}, pad={self.pad}"
+        )
     
     
     def pre_process(self, img):
-        
+        logger.debug(f"Pre-processing image with shape: {img.shape}")
         img = torch.from_numpy(np.transpose(img, (2, 0, 1))).float()
         self.img = img.unsqueeze(0).to(self.device)
         
@@ -62,24 +73,24 @@ class RESRGANinf:
             if (w % self.mod_scale != 0):
                 self.mod_pad_w = (self.mod_scale - w % self.mod_scale)
             self.img = F.pad(self.img, (0, self.mod_pad_w, 0, self.mod_pad_h), 'reflect')
+            logger.debug(f"Image dimensions adjusted with padding: mod_pad_h={self.mod_pad_h}, mod_pad_w={self.mod_pad_w}")
+
             
         return self.img
     
     def tile_inference(self, tile_size):
+        logger.debug(f"Starting tiled inference with tile size: {tile_size}")
         batch, channel, height, width = self.img.shape
         output_height = height * self.scale
         output_width = width * self.scale
         output_shape = (batch, channel, output_height, output_width)
         
-        # Calculate count of tiles, depends on available memory
-        #tile_size = self.memory_manager.calculate_tile_count(batch, channel, height, width)
-        print(f'tile count {tile_size}')
+       
 
         # start with black image
         self.output = self.img.new_zeros(output_shape)
         tiles_x = int(np.ceil(width / tile_size))
         tiles_y = int(np.ceil(height / tile_size))
-        print(tiles_x, tiles_y)
 
         # loop over all tiles
         for y in range(tiles_y):
@@ -102,7 +113,6 @@ class RESRGANinf:
                 # input tile dimensions
                 input_tile_width = input_end_x - input_start_x
                 input_tile_height = input_end_y - input_start_y
-                tile_idx = y * tiles_x + x + 1
                 input_tile = self.img[:, :, input_start_y_pad:input_end_y_pad, input_start_x_pad:input_end_x_pad]
 
                 # upscale tile
@@ -111,8 +121,6 @@ class RESRGANinf:
                         output_tile = self.model(input_tile)
                 except RuntimeError as error:
                     print('Error', error)
-                if tile_idx % 1000 == 0:
-                    print(f'\tTile {tile_idx}/{tiles_x * tiles_y}')
 
                 # output tile area on total image
                 output_start_x = input_start_x * self.scale
@@ -130,11 +138,16 @@ class RESRGANinf:
                 self.output[:, :, output_start_y:output_end_y,
                             output_start_x:output_end_x] = output_tile[:, :, output_start_y_tile:output_end_y_tile,
                                                                        output_start_x_tile:output_end_x_tile]
+        logger.debug("Tiled inference completed.")
+
 
     def inference(self):
+        logger.debug("Starting inference on the whole image.")
         self.output = self.model(self.img)
+        logger.debug("Inference completed.")
         
     def post_process(self):
+        logger.debug("Post-processing output image.")
         if self.mod_scale is not None:
             _, _, h, w = self.output.size()
             self.output = self.output[:, :, 0:h - self.mod_pad_h * self.scale, 0:w - self.mod_pad_w * self.scale]
@@ -142,10 +155,13 @@ class RESRGANinf:
         if self.pad != 0:
             _, _, h, w = self.output.size()
             self.output = self.output[:, :, 0:h - self.pad * self.scale, 0:w - self.pad * self.scale]
+            
+        logger.debug(f"Post-processing completed. Final output shape: {self.output.shape}")
         return self.output
     
     @torch.no_grad()
     def upgrade_resolution(self, img, outscale=None, alpha_upsampler='realesrgan'):
+        logger.debug(f"Upgrading resolution for image with shape: {img.shape}")
         h_input_img, w_input_img = img.shape[0:2]
         
         img = img.astype(np.float32)
@@ -215,7 +231,7 @@ class RESRGANinf:
                     int(w_input_img * outscale),
                     int(h_input_img * outscale),
                 ), interpolation=cv2.INTER_LANCZOS4)
-
+        logger.debug("Resolution upgrade completed.")
         return output, img_mode
         
         
