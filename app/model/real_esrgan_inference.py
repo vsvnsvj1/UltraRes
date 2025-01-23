@@ -7,24 +7,24 @@ from app.model.memory_manager import MemoryManager
 
 logger = logging.getLogger(__name__)
 
+
 class RESRGANinf:
-    
     def __init__(self,
                  scale,
                  model=None,
                  model_path=None,
                  device=None,
-                 calc_tiles = False,
-                 tile_pad = 10,
+                 calc_tiles=False,
+                 tile_pad=10,
                  pad=10,
-                 pixel_size_kb = 50
+                 pixel_size_kb=50
                  ) -> None:
         self.calc_tiles = calc_tiles
         self.tile_pad = tile_pad
         self.scale = scale
         self.pad = pad
         self.mod_scale = None
-        
+
         if device is None:
             if torch.cuda.is_available():
                 self.device = torch.device("cuda")
@@ -34,33 +34,33 @@ class RESRGANinf:
                 self.device = torch.device("cpu")
         else:
             self.device = torch.device(f"{device}")
-            
-        
+
         logger.debug(f"Loading model from {model_path}...")
-        model_loader = torch.load(model_path, map_location= torch.device("cpu"), weights_only=True)
+        model_loader = torch.load(model_path, map_location=torch.device("cpu"), weights_only=True)
         keyname = 'params_ema' if 'params_ema' in model_loader else 'params'
         model.load_state_dict(model_loader[keyname], strict=True)
-        
+
         model.eval()
         self.model = model.to(self.device)
-        
-        self.memory_manager = MemoryManager(pixel_cost_kb=pixel_size_kb, device=self.device) if calc_tiles else None
-        
-       
+
+        self.memory_manager = MemoryManager(
+            pixel_cost_kb=pixel_size_kb,
+            device=self.device
+            ) if calc_tiles else None
+
         logger.debug(
             f"Initialized RESRGANinf with scale={self.scale}, device={self.device}, "
             f"calc_tiles={self.calc_tiles}, tile_pad={self.tile_pad}, pad={self.pad}"
         )
-    
-    
+
     def pre_process(self, img):
         logger.debug(f"Pre-processing image with shape: {img.shape}")
         img = torch.from_numpy(np.transpose(img, (2, 0, 1))).float()
         self.img = img.unsqueeze(0).to(self.device)
-        
+
         if self.pad != 0:
             self.img = F.pad(self.img, (0, self.pad, 0, self.pad), 'reflect')
-            
+
         if self.scale == 2:
             self.mod_scale = 2
         elif self.scale == 1:
@@ -73,19 +73,18 @@ class RESRGANinf:
             if (w % self.mod_scale != 0):
                 self.mod_pad_w = (self.mod_scale - w % self.mod_scale)
             self.img = F.pad(self.img, (0, self.mod_pad_w, 0, self.mod_pad_h), 'reflect')
-            logger.debug(f"Image dimensions adjusted with padding: mod_pad_h={self.mod_pad_h}, mod_pad_w={self.mod_pad_w}")
+            logger.debug(f"Image dimensions adjusted with padding: "
+                         f"mod_pad_h={self.mod_pad_h}, mod_pad_w={self.mod_pad_w}"
+                         )
 
-            
         return self.img
-    
+
     def tile_inference(self, tile_size):
         logger.debug(f"Starting tiled inference with tile size: {tile_size}")
         batch, channel, height, width = self.img.shape
         output_height = height * self.scale
         output_width = width * self.scale
         output_shape = (batch, channel, output_height, output_width)
-        
-       
 
         # start with black image
         self.output = self.img.new_zeros(output_shape)
@@ -113,7 +112,11 @@ class RESRGANinf:
                 # input tile dimensions
                 input_tile_width = input_end_x - input_start_x
                 input_tile_height = input_end_y - input_start_y
-                input_tile = self.img[:, :, input_start_y_pad:input_end_y_pad, input_start_x_pad:input_end_x_pad]
+                input_tile = self.img[
+                    :, :,
+                    input_start_y_pad:input_end_y_pad,
+                    input_start_x_pad:input_end_x_pad
+                    ]
 
                 # upscale tile
                 try:
@@ -135,41 +138,49 @@ class RESRGANinf:
                 output_end_y_tile = output_start_y_tile + input_tile_height * self.scale
 
                 # put tile into output image
-                self.output[:, :, output_start_y:output_end_y,
-                            output_start_x:output_end_x] = output_tile[:, :, output_start_y_tile:output_end_y_tile,
-                                                                       output_start_x_tile:output_end_x_tile]
+                self.output[
+                    :, :,
+                    output_start_y:output_end_y,
+                    output_start_x:output_end_x
+                    ] = output_tile[
+                        :, :,
+                        output_start_y_tile:output_end_y_tile,
+                        output_start_x_tile:output_end_x_tile
+                        ]
         logger.debug("Tiled inference completed.")
-
 
     def inference(self):
         logger.debug("Starting inference on the whole image.")
         self.output = self.model(self.img)
         logger.debug("Inference completed.")
-        
+
     def post_process(self):
         logger.debug("Post-processing output image.")
         if self.mod_scale is not None:
             _, _, h, w = self.output.size()
-            self.output = self.output[:, :, 0:h - self.mod_pad_h * self.scale, 0:w - self.mod_pad_w * self.scale]
+            self.output = self.output[:, :,
+                                      0:h - self.mod_pad_h * self.scale,
+                                      0:w - self.mod_pad_w * self.scale]
         # remove prepad
         if self.pad != 0:
             _, _, h, w = self.output.size()
-            self.output = self.output[:, :, 0:h - self.pad * self.scale, 0:w - self.pad * self.scale]
-            
+            self.output = self.output[:, :,
+                                      0:h - self.pad * self.scale,
+                                      0:w - self.pad * self.scale]
+
         logger.debug(f"Post-processing completed. Final output shape: {self.output.shape}")
         return self.output
-    
-    @torch.no_grad()
-    def upgrade_resolution(self, img, outscale=None, alpha_upsampler='realesrgan'):
-        logger.debug(f"Upgrading resolution for image with shape: {img.shape}")
-        h_input_img, w_input_img = img.shape[0:2]
-        
+
+    def _prepare_image(self, img, alpha_upsampler):
         img = img.astype(np.float32)
         if np.max(img) > 256:
             max_range = 65536
         else:
             max_range = 256
+
         img = img / max_range
+        alpha = None  # Инициализация alpha по умолчанию
+
         if len(img.shape) == 2:
             img_mode = 'L'
             img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
@@ -183,57 +194,81 @@ class RESRGANinf:
         else:
             img_mode = 'RGB'
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            
+
         self.pre_process(img)
-        
+
+        return img, img_mode, alpha, max_range
+
+    def _process_image(self):
         batch, channel, height, width = self.img.shape
         tile_size = self.memory_manager.calculate_tile_count(batch, channel, height, width)
-        
-        if self.calc_tiles == True and tile_size > 1:
-            
+
+        if self.calc_tiles and tile_size > 1:
             self.tile_inference(tile_size * 2 if tile_size > 5 else 10)
-        else:   
+        else:
             self.inference()
+
+    def _finalize_image(self, img_mode, max_range, alpha, alpha_upsampler):
         output_img = self.post_process()
         output_img = output_img.data.squeeze().float().cpu().clamp_(0, 1).numpy()
         output_img = np.transpose(output_img[[2, 1, 0], :, :], (1, 2, 0))
-        
+
+        # Обработка для режимов 'L' и 'RGBA'
         if img_mode == 'L':
             output_img = cv2.cvtColor(output_img, cv2.COLOR_BGR2GRAY)
-        
         if img_mode == 'RGBA':
-            if alpha_upsampler == 'realesrgan':
-                self.pre_process(alpha)
-                self.inference()
-                output_alpha = self.post_process()
-                output_alpha = output_alpha.data.squeeze().float().cpu().clamp_(0, 1).numpy()
-                output_alpha = np.transpose(output_alpha[[2, 1, 0], :, :], (1, 2, 0))
-                output_alpha = cv2.cvtColor(output_alpha, cv2.COLOR_BGR2GRAY)
-            else:  # use the cv2 resize for alpha channel
-                h, w = alpha.shape[0:2]
-                output_alpha = cv2.resize(alpha, (w * self.scale, h * self.scale), interpolation=cv2.INTER_LINEAR)
-            self.img = None
-            self.output = None
-        
-           
-            # merge the alpha channel
-            output_img = cv2.cvtColor(output_img, cv2.COLOR_BGR2BGRA)
-            output_img[:, :, 3] = output_alpha
-            
-        if max_range == 65535:  # 16-bit image
-            output = (output_img * 65535.0).round().astype(np.uint16)
+            output_alpha = self._process_alpha(alpha, alpha_upsampler)
+            output_img = self._merge_alpha(output_img, output_alpha)
+
+        # Приведение к исходному диапазону
+        if max_range == 65536:  # 16-bit изображение
+            output_img = (output_img * 65535.0).round().astype(np.uint16)
         else:
-            output = (output_img * 255.0).round().astype(np.uint8)
+            output_img = (output_img * 255.0).round().astype(np.uint8)
+
+        return output_img
+
+    def _process_alpha(self, alpha, alpha_upsampler):
+        if alpha_upsampler == 'realesrgan':
+            self.pre_process(alpha)
+            self.inference()
+            output_alpha = self.post_process()
+            output_alpha = output_alpha.data.squeeze().float().cpu().clamp_(0, 1).numpy()
+            output_alpha = np.transpose(output_alpha[[2, 1, 0], :, :], (1, 2, 0))
+            output_alpha = cv2.cvtColor(output_alpha, cv2.COLOR_BGR2GRAY)
+        else:
+            h, w = alpha.shape[0:2]
+            output_alpha = cv2.resize(
+                alpha, (w * self.scale, h * self.scale), interpolation=cv2.INTER_LINEAR
+            )
+        return output_alpha
+
+    def _merge_alpha(self, output_img, output_alpha):
+        output_img = cv2.cvtColor(output_img, cv2.COLOR_BGR2BGRA)
+        output_img[:, :, 3] = output_alpha
+        return output_img
+
+    def _rescale_output(self, output, original_shape, outscale):
+        h_input_img, w_input_img = original_shape
+        return cv2.resize(
+            output, (
+                int(w_input_img * outscale),
+                int(h_input_img * outscale)
+            ), interpolation=cv2.INTER_LANCZOS4
+        )
+
+    @torch.no_grad()
+    def upgrade_resolution(self, img, outscale=None, alpha_upsampler='realesrgan'):
+        logger.debug(f"Upgrading resolution for image with shape: {img.shape}")
+
+        img, img_mode, alpha, max_range = self._prepare_image(img, alpha_upsampler)
+
+        self._process_image()
+
+        output_img = self._finalize_image(img_mode, max_range, alpha, alpha_upsampler)
 
         if outscale is not None and outscale != float(self.scale):
-            output = cv2.resize(
-                output, (
-                    int(w_input_img * outscale),
-                    int(h_input_img * outscale),
-                ), interpolation=cv2.INTER_LANCZOS4)
-        logger.debug("Resolution upgrade completed.")
-        return output, img_mode
-        
-        
+            output_img = self._rescale_output(output_img, img.shape[:2], outscale)
 
-    
+        logger.debug("Resolution upgrade completed.")
+        return output_img, img_mode

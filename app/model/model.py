@@ -47,14 +47,12 @@ class RRDB(nn.Module):
         self.rdb1 = ResidualDenseBlock(num_feat, num_grow_ch)
         self.rdb2 = ResidualDenseBlock(num_feat, num_grow_ch)
         self.rdb3 = ResidualDenseBlock(num_feat, num_grow_ch)
-    
+
     def forward(self, x):
         out = self.rdb1(x)
         out = self.rdb2(out)
         out = self.rdb3(out)
         return out * 0.2 + x
-    
-    
 
 
 class RRDBNet(nn.Module):
@@ -65,8 +63,9 @@ class RRDBNet(nn.Module):
 
     We extend ESRGAN for scale x2 and scale x1.
     Note: This is one option for scale 1, scale 2 in RRDBNet.
-    We first employ the pixel-unshuffle (an inverse operation of pixelshuffle to reduce the spatial size
-    and enlarge the channel size before feeding inputs into the main ESRGAN architecture.
+    We first employ the pixel-unshuffle (an inverse operation of pixelshuffle
+    to reduce the spatial size and enlarge the channel size before feeding
+    inputs into the main ESRGAN architecture.
 
     Args:
         num_in_ch (int): Channel number of inputs.
@@ -76,7 +75,6 @@ class RRDBNet(nn.Module):
         num_block (int): Block number in the trunk network. Defaults: 23
         num_grow_ch (int): Channels for each growth. Default: 32.
     """
-    
 
     def __init__(self, num_in_ch, num_out_ch, scale=4, num_feat=64, num_block=23, num_grow_ch=32):
         super(RRDBNet, self).__init__()
@@ -111,7 +109,7 @@ class RRDBNet(nn.Module):
         for _ in range(num_basic_block):
             layers.append(basic_block(**kwarg))
         return nn.Sequential(*layers)
-    
+
     @staticmethod
     def pixel_unshuffle(x, scale):
         """ Pixel unshuffle.
@@ -131,12 +129,6 @@ class RRDBNet(nn.Module):
         x_view = x.view(b, c, h, scale, w, scale)
         return x_view.permute(0, 1, 3, 5, 2, 4).reshape(b, out_channel, h, w)
 
-    def forward(self, x):
-        out = self.rdb1(x)
-        out = self.rdb2(out)
-        out = self.rdb3(out)
-        return out * 0.2 + x
-    
     def forward(self, x):
         if self.scale == 2:
             feat = self.pixel_unshuffle(x, scale=2)

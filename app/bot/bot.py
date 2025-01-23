@@ -7,10 +7,8 @@ from config import TELEGRAM_BOT_TOKEN, LOG_LEVEL
 from .producer import ImageProducer
 
 
-
-
 logging.basicConfig(
-    level=getattr(logging, LOG_LEVEL, logging.INFO), 
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
@@ -21,6 +19,7 @@ dp = Dispatcher()
 # Иницилизация продюсера
 producer = ImageProducer(bot)
 
+
 @dp.message(Command('start'))
 async def send_welcome(message: types.Message):
     """Обработчик команды /start"""
@@ -28,6 +27,7 @@ async def send_welcome(message: types.Message):
         "Привет! Я бот для обработки изображений. 👋\n"
         "Отправь мне изображение, и я обработаю его с помощью нейросети. 🖼"
     )
+
 
 @dp.message(Command('help'))
 async def send_help(message: types.Message):
@@ -42,6 +42,7 @@ async def send_help(message: types.Message):
         "/help - Показать эту справку"
     )
 
+
 @dp.message(F.content_type == ContentType.PHOTO)
 async def handle_photo(message: types.Message):
     """Обработчик входящих фотографий"""
@@ -50,22 +51,23 @@ async def handle_photo(message: types.Message):
         processing_msg = await message.reply(
             "📥 Получил ваше изображение. Начинаю обработку..."
         )
-        
+
         photo = message.photo[-1]
         image_bytes = await bot.download(photo.file_id)
         image_bytes = image_bytes.read()
-        
+
         await producer.send_image(image_bytes, message.from_user.id)
 
         await processing_msg.edit_text(
             "🔄 Изображение отправлено на обработку.\n"
             "⏳ Я пришлю результат, как только он будет готов."
         )
-        
+
     except Exception as e:
         error_msg = f"❌ Произошла ошибка при обработке изображения: {str(e)}"
         logger.error(error_msg)
         await message.reply(error_msg)
+
 
 @dp.message()
 async def handle_unknown(message: types.Message):
@@ -75,6 +77,7 @@ async def handle_unknown(message: types.Message):
         "Отправьте /help для получения справки."
     )
 
+
 async def main():
 
     await producer.connect()
@@ -82,7 +85,6 @@ async def main():
     asyncio.create_task(producer.process_result())
     await dp.start_polling(bot)
 
-   
 
 if __name__ == '__main__':
     try:

@@ -18,13 +18,14 @@ from config import (
 )
 
 logging.basicConfig(
-    level=getattr(logging, LOG_LEVEL, logging.INFO), 
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
 SEMAPHORE_LIMIT = 2  # Максимальное количество параллельных задач
 semaphore = asyncio.Semaphore(SEMAPHORE_LIMIT)
+
 
 async def load_model(device=None):
     """
@@ -33,9 +34,18 @@ async def load_model(device=None):
     MODEL_PATH = 'app/model/RealESRGAN_x4plus.pth'
     logger.info("Загрузка модели Real-ESRGAN...")
     model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=4)
-    upsmpl = RESRGANinf(scale=4, model=model, model_path=MODEL_PATH, device=device,calc_tiles=True, tile_pad=10, pad=10)
+    upsmpl = RESRGANinf(
+        scale=4,
+        model=model,
+        model_path=MODEL_PATH,
+        device=device,
+        calc_tiles=True,
+        tile_pad=10,
+        pad=10
+        )
     logger.info("Модель успешно загружена.")
     return upsmpl
+
 
 async def process_image(image_bytes, model):
     """
@@ -44,15 +54,15 @@ async def process_image(image_bytes, model):
     Args:
         image_bytes (bytes): Байтовые данные изображения.
         model (RESRGANinf): Объект модели для обработки.
-    
+
     Returns:
         bytes: Обработанное изображение в байтах.
     """
     logger.info("Начало обработки изображения.")
-    
+
     np_image = np.frombuffer(image_bytes, np.uint8)
     img = cv2.imdecode(np_image, cv2.IMREAD_COLOR)
-    
+
     if img is None:
         logger.error("Ошибка: не удалось декодировать изображение.")
         raise ValueError("Не удалось декодировать изображение.")
@@ -65,6 +75,7 @@ async def process_image(image_bytes, model):
     _, encoded_image = cv2.imencode('.jpg', processed_image)
     logger.info("Обработка изображения завершена.")
     return encoded_image.tobytes()
+
 
 async def publish_with_retry(connection, message, routing_key, retries=3):
     """
@@ -85,6 +96,7 @@ async def publish_with_retry(connection, message, routing_key, retries=3):
                 await asyncio.sleep(2 ** attempt)  # Экспоненциальная задержка
             else:
                 raise
+
 
 async def handle_message(message: aio_pika.IncomingMessage, model, connection, output_queue_name):
     """
@@ -114,7 +126,7 @@ async def handle_message(message: aio_pika.IncomingMessage, model, connection, o
                 # Обработка изображения
                 logger.info("Начинается обработка изображения...")
                 processed_image = await process_image(image_bytes, model)
-            
+
                 # Создаём сообщение
                 message_to_publish = aio_pika.Message(
                     body=processed_image,
@@ -128,24 +140,31 @@ async def handle_message(message: aio_pika.IncomingMessage, model, connection, o
                 logger.error(f"Ошибка при обработке сообщения: {e}", exc_info=True)
                 await message.reject(requeue=False)  # Отклоняем сообщение без повторной отправки
 
-   
-            
+
 async def main():
     """
     Основная функция, запускающая обработку изображений через очередь.
     """
     logger.info("Инициализация сервиса обработки изображений.")
     model = await load_model()
-    
+
     logger.info("Подключение к RabbitMQ...")
+
+    rabbitmq_url = (
+        f"amqp://{RABBITMQ_USER}:{RABBITMQ_PASSWORD}"
+        f"@{RABBITMQ_HOST}:{RABBITMQ_PORT}/{RABBITMQ_VHOST}"
+        )
+
+    client_props = {
+        "connection_timeout": 300,  # Время ожидания соединения
+        "heartbeat": 600,          # Интервал heartbeat
+    }
+
     connection = await aio_pika.connect_robust(
-        f"amqp://{RABBITMQ_USER}:{RABBITMQ_PASSWORD}@{RABBITMQ_HOST}:{RABBITMQ_PORT}/{RABBITMQ_VHOST}",
-        client_properties={
-            "connection_timeout": 300,  
-            "heartbeat": 600,          
-        },
-    )
-    
+        rabbitmq_url,
+        client_properties=client_props,
+        )
+
     try:
         async with connection:
             logger.info("Подключение к RabbitMQ успешно установлено.")
@@ -154,13 +173,20 @@ async def main():
             # Объявление очередей
             input_queue = await channel.declare_queue(QUEUE_PROCESS_IMAGE, durable=True)
             output_queue_name = QUEUE_RESULT
-            
+
             # Устанавливаем prefetch_count
             await channel.set_qos(prefetch_count=SEMAPHORE_LIMIT)
-            
+
             # Привязываем обработчик сообщений
-            await input_queue.consume(lambda msg: handle_message(msg, model, connection, output_queue_name))
-            
+            await input_queue.consume(
+                lambda msg: handle_message(
+                    msg,
+                    model,
+                    connection,
+                    output_queue_name,
+                    )
+                )
+
             logger.info("Сервис обработки изображений запущен и ожидает сообщений.")
             await asyncio.Future()  # Бесконечное ожидаение сообщений
     except asyncio.CancelledError:
@@ -173,8 +199,6 @@ async def main():
             await connection.close()
             logger.info("Соединение с RabbitMQ закрыто.")
 
-
-       
 
 if __name__ == "__main__":
     try:
