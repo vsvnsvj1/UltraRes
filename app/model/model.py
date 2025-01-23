@@ -56,7 +56,8 @@ class RRDB(nn.Module):
 
 
 class RRDBNet(nn.Module):
-    """Networks consisting of Residual in Residual Dense Block, which is used
+    """
+    Networks consisting of Residual in Residual Dense Block, which is used
     in ESRGAN.
 
     ESRGAN: Enhanced Super-Resolution Generative Adversarial Networks.
@@ -96,7 +97,8 @@ class RRDBNet(nn.Module):
 
     @staticmethod
     def make_layer(basic_block, num_basic_block, **kwarg):
-        """Make layers by stacking the same blocks.
+        """
+        Make layers by stacking the same blocks.
 
         Args:
             basic_block (nn.module): nn.module class for basic block.
@@ -112,7 +114,8 @@ class RRDBNet(nn.Module):
 
     @staticmethod
     def pixel_unshuffle(input_tensor, scale):
-        """ Pixel unshuffle.
+        """
+        Pixel unshuffle.
 
         Args:
             input_tensor (Tensor): Input feature with shape (b, c, hh, hw).
@@ -145,18 +148,18 @@ class RRDBNet(nn.Module):
                 functional.interpolate(
                     feat,
                     scale_factor=2,
-                    mode='nearest',
-                    ),
+                    mode="nearest",
                 ),
-            )
+            ),
+        )
         feat = self.lrelu(
             self.conv_up2(
                 functional.interpolate(
                     feat,
                     scale_factor=2,
-                    mode='nearest',
-                    ),
+                    mode="nearest",
                 ),
-            )
+            ),
+        )
         out = self.conv_last(self.lrelu(self.conv_hr(feat)))
         return out

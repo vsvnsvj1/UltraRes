@@ -7,9 +7,18 @@ from typing import Optional
 import aio_pika
 from aiogram import Bot
 from aiogram.types import BufferedInputFile
-from config import (DEBUG, QUEUE_PROCESS_IMAGE, QUEUE_RESULT, RABBITMQ_HOST,
-                    RABBITMQ_PASSWORD, RABBITMQ_PORT, RABBITMQ_USER,
-                    RABBITMQ_VHOST, RESULT_DIR, UPLOAD_DIR)
+from config import (
+    DEBUG,
+    QUEUE_PROCESS_IMAGE,
+    QUEUE_RESULT,
+    RABBITMQ_HOST,
+    RABBITMQ_PASSWORD,
+    RABBITMQ_PORT,
+    RABBITMQ_USER,
+    RABBITMQ_VHOST,
+    RESULT_DIR,
+    UPLOAD_DIR,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -26,10 +35,10 @@ class ImageProducer:
 
     @staticmethod
     async def _save_image_to_dir(
-            image_bytes: bytes,
-            chat_id: int,
-            dir_name: str,
-            ) -> str:
+        image_bytes: bytes,
+        chat_id: int,
+        dir_name: str,
+    ) -> str:
         """
         Сохраняет изображение в директорию dir_name, если DEBUG включен.
 
@@ -96,7 +105,7 @@ class ImageProducer:
             image_bytes,
             chat_id,
             UPLOAD_DIR,
-            )
+        )
 
         try:
             if not self.channel:
@@ -132,7 +141,7 @@ class ImageProducer:
                 processed_image,
                 chat_id,
                 RESULT_DIR,
-                )
+            )
             await self._send_image_to_chat(chat_id, processed_image)
 
             logger.info(f"Изображение успешно отправлено в чат {chat_id}")

@@ -10,7 +10,7 @@ from .producer import ImageProducer
 
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
 
@@ -21,7 +21,7 @@ dp = Dispatcher()
 producer = ImageProducer(bot)
 
 
-@dp.message(Command('start'))
+@dp.message(Command("start"))
 async def send_welcome(message: types.Message):
     """Обработчик команды /start"""
     await message.reply(
@@ -30,7 +30,7 @@ async def send_welcome(message: types.Message):
     )
 
 
-@dp.message(Command('help'))
+@dp.message(Command("help"))
 async def send_help(message: types.Message):
     """Обработчик команды /help"""
     await message.reply(
@@ -74,8 +74,7 @@ async def handle_photo(message: types.Message):
 async def handle_unknown(message: types.Message):
     """Обработчик всех остальных сообщений"""
     await message.reply(
-        "🤔 Я понимаю только команды и изображения.\n"
-        "Отправьте /help для получения справки.",
+        "🤔 Я понимаю только команды и изображения.\n" "Отправьте /help для получения справки.",
     )
 
 
@@ -87,7 +86,7 @@ async def main():
     await dp.start_polling(bot)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     try:
         asyncio.run(main())
     except asyncio.CancelledError:

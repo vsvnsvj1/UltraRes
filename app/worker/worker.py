@@ -8,13 +8,20 @@ import numpy as np
 
 from app.model.model import RRDBNet
 from app.model.real_esrgan_inference import RESRGANinf
-from config import (LOG_LEVEL, QUEUE_PROCESS_IMAGE, QUEUE_RESULT,
-                    RABBITMQ_HOST, RABBITMQ_PASSWORD, RABBITMQ_PORT,
-                    RABBITMQ_USER, RABBITMQ_VHOST)
+from config import (
+    LOG_LEVEL,
+    QUEUE_PROCESS_IMAGE,
+    QUEUE_RESULT,
+    RABBITMQ_HOST,
+    RABBITMQ_PASSWORD,
+    RABBITMQ_PORT,
+    RABBITMQ_USER,
+    RABBITMQ_VHOST,
+)
 
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
 
@@ -31,12 +38,12 @@ async def load_model(device=None):
     upsmpl = RESRGANinf(
         scale=4,
         model=model,
-        model_path='app/model/RealESRGAN_x4plus.pth',
+        model_path="app/model/RealESRGAN_x4plus.pth",
         device=device,
         calc_tiles=True,
         tile_pad=10,
         pad=10,
-        )
+    )
     logger.info("Модель успешно загружена.")
     return upsmpl
 
@@ -66,7 +73,7 @@ async def process_image(image_bytes, model):
     processed_image, _ = model.upgrade_resolution(img)
 
     # Кодируем обратно в JPEG
-    _, encoded_image = cv2.imencode('.jpg', processed_image)
+    _, encoded_image = cv2.imencode(".jpg", processed_image)
     logger.info("Обработка изображения завершена.")
     return encoded_image.tobytes()
 
@@ -87,7 +94,7 @@ async def publish_with_retry(connection, message, routing_key, retries=3):
         except Exception as e:
             logger.error(f"Попытка {attempt + 1} не удалась: {e}")
             if attempt < retries - 1:
-                await asyncio.sleep(2 ** attempt)  # Экспоненциальная задержка
+                await asyncio.sleep(2**attempt)  # Экспоненциальная задержка
             else:
                 raise
 
@@ -147,17 +154,17 @@ async def main():
     rabbitmq_url = (
         f"amqp://{RABBITMQ_USER}:{RABBITMQ_PASSWORD}"
         f"@{RABBITMQ_HOST}:{RABBITMQ_PORT}/{RABBITMQ_VHOST}"
-        )
+    )
 
     client_props = {
         "connection_timeout": 300,  # Время ожидания соединения
-        "heartbeat": 600,          # Интервал heartbeat
+        "heartbeat": 600,  # Интервал heartbeat
     }
 
     connection = await aio_pika.connect_robust(
         rabbitmq_url,
         client_properties=client_props,
-        )
+    )
 
     try:
         async with connection:
@@ -178,8 +185,8 @@ async def main():
                     model,
                     connection,
                     output_queue_name,
-                    ),
-                )
+                ),
+            )
 
             logger.info("Сервис обработки изображений запущен и ожидает сообщений.")
             await asyncio.Future()  # Бесконечное ожидаение сообщений

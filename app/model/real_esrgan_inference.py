@@ -10,16 +10,17 @@ logger = logging.getLogger(__name__)
 
 
 class RESRGANinf:
-    def __init__(self,
-                 scale,
-                 model=None,
-                 model_path=None,
-                 device=None,
-                 calc_tiles=False,
-                 tile_pad=10,
-                 pad=10,
-                 pixel_size_kb=50,
-                 ) -> None:
+    def __init__(
+        self,
+        scale,
+        model=None,
+        model_path=None,
+        device=None,
+        calc_tiles=False,
+        tile_pad=10,
+        pad=10,
+        pixel_size_kb=50,
+    ) -> None:
         self.calc_tiles = calc_tiles
         self.tile_pad = tile_pad
         self.scale = scale
@@ -38,16 +39,20 @@ class RESRGANinf:
 
         logger.debug(f"Loading model from {model_path}...")
         model_loader = torch.load(model_path, map_location=torch.device("cpu"), weights_only=True)
-        keyname = 'params_ema' if 'params_ema' in model_loader else 'params'
+        keyname = "params_ema" if "params_ema" in model_loader else "params"
         model.load_state_dict(model_loader[keyname], strict=True)
 
         model.eval()
         self.model = model.to(self.device)
 
-        self.memory_manager = MemoryManager(
-            pixel_cost_kb=pixel_size_kb,
-            device=self.device,
-            ) if calc_tiles else None
+        self.memory_manager = (
+            MemoryManager(
+                pixel_cost_kb=pixel_size_kb,
+                device=self.device,
+            )
+            if calc_tiles
+            else None
+        )
 
         logger.debug(
             f"Initialized RESRGANinf with scale={self.scale}, device={self.device}, "
@@ -60,7 +65,7 @@ class RESRGANinf:
         self.img = img.unsqueeze(0).to(self.device)
 
         if self.pad != 0:
-            self.img = functional.pad(self.img, (0, self.pad, 0, self.pad), 'reflect')
+            self.img = functional.pad(self.img, (0, self.pad, 0, self.pad), "reflect")
 
         if self.scale == 2:
             self.mod_scale = 2
@@ -69,14 +74,15 @@ class RESRGANinf:
         if self.mod_scale is not None:
             self.mod_pad_h, self.mod_pad_w = 0, 0
             _, _, height, width = self.img.size()
-            if (height % self.mod_scale != 0):
-                self.mod_pad_h = (self.mod_scale - height % self.mod_scale)
-            if (width % self.mod_scale != 0):
-                self.mod_pad_w = (self.mod_scale - width % self.mod_scale)
-            self.img = functional.pad(self.img, (0, self.mod_pad_w, 0, self.mod_pad_h), 'reflect')
-            logger.debug(f"Image dimensions adjusted with padding: "
-                         f"mod_pad_h={self.mod_pad_h}, mod_pad_w={self.mod_pad_w}",
-                         )
+            if height % self.mod_scale != 0:
+                self.mod_pad_h = self.mod_scale - height % self.mod_scale
+            if width % self.mod_scale != 0:
+                self.mod_pad_w = self.mod_scale - width % self.mod_scale
+            self.img = functional.pad(self.img, (0, self.mod_pad_w, 0, self.mod_pad_h), "reflect")
+            logger.debug(
+                f"Image dimensions adjusted with padding: "
+                f"mod_pad_h={self.mod_pad_h}, mod_pad_w={self.mod_pad_w}",
+            )
 
         return self.img
 
@@ -113,17 +119,18 @@ class RESRGANinf:
                 input_tile_width = input_end_x - input_start_x
                 input_tile_height = input_end_y - input_start_y
                 input_tile = self.img[
-                    :, :,
+                    :,
+                    :,
                     input_start_y_pad:input_end_y_pad,
                     input_start_x_pad:input_end_x_pad,
-                    ]
+                ]
 
                 # upscale tile
                 try:
                     with torch.no_grad():
                         output_tile = self.model(input_tile)
                 except RuntimeError as error:
-                    print('Error', error)
+                    print("Error", error)
 
                 # output tile area on total image
                 output_start_x = input_start_x * self.scale
@@ -139,14 +146,16 @@ class RESRGANinf:
 
                 # put tile into output image
                 self.output[
-                    :, :,
+                    :,
+                    :,
                     output_start_y:output_end_y,
                     output_start_x:output_end_x,
-                    ] = output_tile[
-                        :, :,
-                        output_start_y_tile:output_end_y_tile,
-                        output_start_x_tile:output_end_x_tile,
-                        ]
+                ] = output_tile[
+                    :,
+                    :,
+                    output_start_y_tile:output_end_y_tile,
+                    output_start_x_tile:output_end_x_tile,
+                ]
         logger.debug("Tiled inference completed.")
 
     def inference(self):
@@ -158,15 +167,18 @@ class RESRGANinf:
         logger.debug("Post-processing output image.")
         if self.mod_scale is not None:
             _, _, height, width = self.output.size()
-            self.output = self.output[:, :,
-                                      0:height - self.mod_pad_h * self.scale,
-                                      0:width - self.mod_pad_w * self.scale]
+            self.output = self.output[
+                :,
+                :,
+                0 : height - self.mod_pad_h * self.scale,
+                0 : width - self.mod_pad_w * self.scale,
+            ]
         # remove prepad
         if self.pad != 0:
             _, _, height, width = self.output.size()
-            self.output = self.output[:, :,
-                                      0:height - self.pad * self.scale,
-                                      0:width - self.pad * self.scale]
+            self.output = self.output[
+                :, :, 0 : height - self.pad * self.scale, 0 : width - self.pad * self.scale
+            ]
 
         logger.debug(f"Post-processing completed. Final output shape: {self.output.shape}")
         return self.output
@@ -182,17 +194,17 @@ class RESRGANinf:
         alpha = None  # Инициализация alpha по умолчанию
 
         if len(img.shape) == 2:
-            img_mode = 'L'
+            img_mode = "L"
             img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
         elif img.shape[2] == 4:
-            img_mode = 'RGBA'
+            img_mode = "RGBA"
             alpha = img[:, :, 3]
             img = img[:, :, 0:3]
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            if alpha_upsampler == 'realesrgan':
+            if alpha_upsampler == "realesrgan":
                 alpha = cv2.cvtColor(alpha, cv2.COLOR_GRAY2RGB)
         else:
-            img_mode = 'RGB'
+            img_mode = "RGB"
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
         self.pre_process(img)
@@ -214,9 +226,9 @@ class RESRGANinf:
         output_img = np.transpose(output_img[[2, 1, 0], :, :], (1, 2, 0))
 
         # Обработка для режимов 'L' и 'RGBA'
-        if img_mode == 'L':
+        if img_mode == "L":
             output_img = cv2.cvtColor(output_img, cv2.COLOR_BGR2GRAY)
-        if img_mode == 'RGBA':
+        if img_mode == "RGBA":
             output_alpha = self._process_alpha(alpha, alpha_upsampler)
             output_img = self._merge_alpha(output_img, output_alpha)
 
@@ -229,7 +241,7 @@ class RESRGANinf:
         return output_img
 
     def _process_alpha(self, alpha, alpha_upsampler):
-        if alpha_upsampler == 'realesrgan':
+        if alpha_upsampler == "realesrgan":
             self.pre_process(alpha)
             self.inference()
             output_alpha = self.post_process()
@@ -239,7 +251,8 @@ class RESRGANinf:
         else:
             height, width = alpha.shape[0:2]
             output_alpha = cv2.resize(
-                alpha, (width * self.scale, height * self.scale),
+                alpha,
+                (width * self.scale, height * self.scale),
                 interpolation=cv2.INTER_LINEAR,
             )
         return output_alpha
@@ -252,14 +265,16 @@ class RESRGANinf:
     def _rescale_output(self, output, original_shape, outscale):
         h_input_img, w_input_img = original_shape
         return cv2.resize(
-            output, (
+            output,
+            (
                 int(w_input_img * outscale),
                 int(h_input_img * outscale),
-            ), interpolation=cv2.INTER_LANCZOS4,
+            ),
+            interpolation=cv2.INTER_LANCZOS4,
         )
 
     @torch.no_grad()
-    def upgrade_resolution(self, img, outscale=None, alpha_upsampler='realesrgan'):
+    def upgrade_resolution(self, img, outscale=None, alpha_upsampler="realesrgan"):
         logger.debug(f"Upgrading resolution for image with shape: {img.shape}")
 
         img, img_mode, alpha, max_range = self._prepare_image(img, alpha_upsampler)
