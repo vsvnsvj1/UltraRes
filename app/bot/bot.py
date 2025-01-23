@@ -2,10 +2,8 @@ from aiogram import Bot, Dispatcher, types, F
 from aiogram.types import ContentType
 from aiogram.filters import Command
 import asyncio
-import signal
-import os
 import logging
-from config import TELEGRAM_BOT_TOKEN, UPLOAD_DIR, DEBUG, LOG_LEVEL
+from config import TELEGRAM_BOT_TOKEN, LOG_LEVEL
 from .producer import ImageProducer
 
 
@@ -56,17 +54,6 @@ async def handle_photo(message: types.Message):
         photo = message.photo[-1]
         image_bytes = await bot.download(photo.file_id)
         image_bytes = image_bytes.read()
-    
-        
-        if DEBUG:
-            os.makedirs(UPLOAD_DIR, exist_ok=True)
-            file_info = await bot.get_file(photo.file_id)
-            file_extension = os.path.splitext(file_info.file_path)[1] or ".jpg"
-            file_name = f"{message.from_user.id}_{photo.file_id}{file_extension}"
-            file_path = os.path.join(UPLOAD_DIR, file_name)
-            with open(file_path, "wb") as f:
-                f.write(image_bytes)
-            logger.debug(f"Изображение сохранено в {file_path}")
         
         await producer.send_image(image_bytes, message.from_user.id)
 

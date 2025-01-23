@@ -2,6 +2,8 @@ import aio_pika
 import json
 from typing import Optional
 import logging
+import os
+from datetime import datetime
 from aiogram import Bot
 import asyncio
 from config import (
@@ -11,9 +13,13 @@ from config import (
     RABBITMQ_PASSWORD,
     RABBITMQ_VHOST,
     QUEUE_PROCESS_IMAGE,
-    QUEUE_RESULT
+    QUEUE_RESULT,
+    UPLOAD_DIR,
+    RESULT_DIR,
+    DEBUG
 )
 from aiogram.types import BufferedInputFile
+
 logger = logging.getLogger(__name__)
 
 class ImageProducer:
@@ -25,6 +31,31 @@ class ImageProducer:
         self.bot = bot
         self._consuming = False
         self._consume_task = None
+    
+    @staticmethod
+    async def save_image_to_dir( image_bytes: bytes, chat_id: int, dir_name: str, file_name: str = '') -> str:
+        """
+        Сохраняет изображение в директорию dir_name, если DEBUG включен.
+
+        Args:
+            image_bytes (bytes): Байты изображения.
+            chat_id (int): ID пользователя.
+            dir_name (str): Название директории
+            file_name (str): Имя файла.
+
+        Returns:
+            str: Путь к сохраненному файлу.
+        """
+        if not DEBUG:
+            return None
+
+        os.makedirs(dir_name, exist_ok=True)
+        file_name = f"{chat_id}_{file_name}.jpg"
+        file_path = os.path.join(dir_name, file_name)
+        with open(file_path, "wb") as f:
+            f.write(image_bytes)
+        logger.debug(f"Изображение сохранено в {file_path}")
+        return file_path
 
     async def connect(self) -> None:
         """
@@ -66,6 +97,12 @@ class ImageProducer:
             image_bytes (bytes): Байты изображения.
             chat_id (int): ID чата для отправки результата.
         """
+        
+        await self.save_image_to_dir(image_bytes,
+                                    chat_id,
+                                    UPLOAD_DIR,
+                                    datetime.now().strftime("%Y%m%d_%H%M%S")
+                                    )
         
         try:
             if not self.channel:
@@ -109,11 +146,19 @@ class ImageProducer:
                                 raise ValueError("Отсутствует chat_id в заголовках.")
                             
                             processed_image = message.body
+                            
+                            await self.save_image_to_dir(processed_image,
+                                                         chat_id,
+                                                         RESULT_DIR,
+                                                         datetime.now().strftime("%Y%m%d_%H%M%S")
+                            )
+                            
                             image_file = BufferedInputFile(processed_image, filename="processed_image.jpg")
                             await self.bot.send_photo(chat_id=chat_id, photo=image_file, caption="Вот ваше обработанное изображение!")
                             logger.info(f"Изображение успешно отправлено в чат {chat_id}")
                         except Exception as e:
                             logger.error(f"Ошибка при обработке результата: {e}")
+                            
         except asyncio.CancelledError:
             logger.info("Обработка очереди остановлена из-за завершения работы.")
         except Exception as e:
