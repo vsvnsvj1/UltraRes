@@ -1,15 +1,16 @@
-from aiogram import Bot, Dispatcher, types, F
-from aiogram.types import ContentType
-from aiogram.filters import Command
 import asyncio
 import logging
-from config import TELEGRAM_BOT_TOKEN, LOG_LEVEL
-from .producer import ImageProducer
 
+from aiogram import Bot, Dispatcher, F, types
+from aiogram.filters import Command
+from aiogram.types import ContentType
+from config import LOG_LEVEL, TELEGRAM_BOT_TOKEN
+
+from .producer import ImageProducer
 
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
 )
 logger = logging.getLogger(__name__)
 
@@ -25,7 +26,7 @@ async def send_welcome(message: types.Message):
     """Обработчик команды /start"""
     await message.reply(
         "Привет! Я бот для обработки изображений. 👋\n"
-        "Отправь мне изображение, и я обработаю его с помощью нейросети. 🖼"
+        "Отправь мне изображение, и я обработаю его с помощью нейросети. 🖼",
     )
 
 
@@ -39,7 +40,7 @@ async def send_help(message: types.Message):
         "3. Получите обработанное изображение\n\n"
         "Команды:\n"
         "/start - Начать работу с ботом\n"
-        "/help - Показать эту справку"
+        "/help - Показать эту справку",
     )
 
 
@@ -49,7 +50,7 @@ async def handle_photo(message: types.Message):
     try:
         # Отправляем сообщение о начале обработки
         processing_msg = await message.reply(
-            "📥 Получил ваше изображение. Начинаю обработку..."
+            "📥 Получил ваше изображение. Начинаю обработку...",
         )
 
         photo = message.photo[-1]
@@ -60,7 +61,7 @@ async def handle_photo(message: types.Message):
 
         await processing_msg.edit_text(
             "🔄 Изображение отправлено на обработку.\n"
-            "⏳ Я пришлю результат, как только он будет готов."
+            "⏳ Я пришлю результат, как только он будет готов.",
         )
 
     except Exception as e:
@@ -74,7 +75,7 @@ async def handle_unknown(message: types.Message):
     """Обработчик всех остальных сообщений"""
     await message.reply(
         "🤔 Я понимаю только команды и изображения.\n"
-        "Отправьте /help для получения справки."
+        "Отправьте /help для получения справки.",
     )
 
 

@@ -1,7 +1,8 @@
-import torch
-import math
-import psutil
 import logging
+import math
+
+import psutil
+import torch
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +21,7 @@ class MemoryManager:
 
         logger.debug(
             f"Initialized MemoryManager with pixel_cost_kb={self.pixel_cost_kb}, "
-            f"device={self.device}, memory_limit_kb={self.memory_limit_kb:.2f}"
+            f"device={self.device}, memory_limit_kb={self.memory_limit_kb:.2f}",
         )
 
     def __get_memory_limit(self):
@@ -80,6 +81,6 @@ class MemoryManager:
 
         logger.debug(
             f"Calculated tile count: {tile_count} for required_memory_kb={required_memory_kb:.2f} "
-            f"and memory_limit_kb={self.memory_limit_kb:.2f}"
+            f"and memory_limit_kb={self.memory_limit_kb:.2f}",
         )
         return tile_count

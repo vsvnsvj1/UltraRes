@@ -1,9 +1,10 @@
-import numpy as np
 import logging
+
 import cv2
+import numpy as np
 import torch
-from torch.nn import functional as F
 from app.model.memory_manager import MemoryManager
+from torch.nn import functional
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +18,7 @@ class RESRGANinf:
                  calc_tiles=False,
                  tile_pad=10,
                  pad=10,
-                 pixel_size_kb=50
+                 pixel_size_kb=50,
                  ) -> None:
         self.calc_tiles = calc_tiles
         self.tile_pad = tile_pad
@@ -45,12 +46,12 @@ class RESRGANinf:
 
         self.memory_manager = MemoryManager(
             pixel_cost_kb=pixel_size_kb,
-            device=self.device
+            device=self.device,
             ) if calc_tiles else None
 
         logger.debug(
             f"Initialized RESRGANinf with scale={self.scale}, device={self.device}, "
-            f"calc_tiles={self.calc_tiles}, tile_pad={self.tile_pad}, pad={self.pad}"
+            f"calc_tiles={self.calc_tiles}, tile_pad={self.tile_pad}, pad={self.pad}",
         )
 
     def pre_process(self, img):
@@ -59,7 +60,7 @@ class RESRGANinf:
         self.img = img.unsqueeze(0).to(self.device)
 
         if self.pad != 0:
-            self.img = F.pad(self.img, (0, self.pad, 0, self.pad), 'reflect')
+            self.img = functional.pad(self.img, (0, self.pad, 0, self.pad), 'reflect')
 
         if self.scale == 2:
             self.mod_scale = 2
@@ -67,14 +68,14 @@ class RESRGANinf:
             self.mod_scale = 4
         if self.mod_scale is not None:
             self.mod_pad_h, self.mod_pad_w = 0, 0
-            _, _, h, w = self.img.size()
-            if (h % self.mod_scale != 0):
-                self.mod_pad_h = (self.mod_scale - h % self.mod_scale)
-            if (w % self.mod_scale != 0):
-                self.mod_pad_w = (self.mod_scale - w % self.mod_scale)
-            self.img = F.pad(self.img, (0, self.mod_pad_w, 0, self.mod_pad_h), 'reflect')
+            _, _, height, width = self.img.size()
+            if (height % self.mod_scale != 0):
+                self.mod_pad_h = (self.mod_scale - height % self.mod_scale)
+            if (width % self.mod_scale != 0):
+                self.mod_pad_w = (self.mod_scale - width % self.mod_scale)
+            self.img = functional.pad(self.img, (0, self.mod_pad_w, 0, self.mod_pad_h), 'reflect')
             logger.debug(f"Image dimensions adjusted with padding: "
-                         f"mod_pad_h={self.mod_pad_h}, mod_pad_w={self.mod_pad_w}"
+                         f"mod_pad_h={self.mod_pad_h}, mod_pad_w={self.mod_pad_w}",
                          )
 
         return self.img
@@ -90,18 +91,17 @@ class RESRGANinf:
         self.output = self.img.new_zeros(output_shape)
         tiles_x = int(np.ceil(width / tile_size))
         tiles_y = int(np.ceil(height / tile_size))
-
         # loop over all tiles
-        for y in range(tiles_y):
-            for x in range(tiles_x):
+        for tile_row_index in range(tiles_y):
+            for tile_column_index in range(tiles_x):
                 # extract tile from input image
-                ofs_x = x * tile_size
-                ofs_y = y * tile_size
+                offset_x = tile_column_index * tile_size
+                offset_y = tile_row_index * tile_size
                 # input tile area on total image
-                input_start_x = ofs_x
-                input_end_x = min(ofs_x + tile_size, width)
-                input_start_y = ofs_y
-                input_end_y = min(ofs_y + tile_size, height)
+                input_start_x = offset_x
+                input_end_x = min(offset_x + tile_size, width)
+                input_start_y = offset_y
+                input_end_y = min(offset_y + tile_size, height)
 
                 # input tile area on total image with padding
                 input_start_x_pad = max(input_start_x - self.tile_pad, 0)
@@ -115,7 +115,7 @@ class RESRGANinf:
                 input_tile = self.img[
                     :, :,
                     input_start_y_pad:input_end_y_pad,
-                    input_start_x_pad:input_end_x_pad
+                    input_start_x_pad:input_end_x_pad,
                     ]
 
                 # upscale tile
@@ -141,11 +141,11 @@ class RESRGANinf:
                 self.output[
                     :, :,
                     output_start_y:output_end_y,
-                    output_start_x:output_end_x
+                    output_start_x:output_end_x,
                     ] = output_tile[
                         :, :,
                         output_start_y_tile:output_end_y_tile,
-                        output_start_x_tile:output_end_x_tile
+                        output_start_x_tile:output_end_x_tile,
                         ]
         logger.debug("Tiled inference completed.")
 
@@ -157,16 +157,16 @@ class RESRGANinf:
     def post_process(self):
         logger.debug("Post-processing output image.")
         if self.mod_scale is not None:
-            _, _, h, w = self.output.size()
+            _, _, height, width = self.output.size()
             self.output = self.output[:, :,
-                                      0:h - self.mod_pad_h * self.scale,
-                                      0:w - self.mod_pad_w * self.scale]
+                                      0:height - self.mod_pad_h * self.scale,
+                                      0:width - self.mod_pad_w * self.scale]
         # remove prepad
         if self.pad != 0:
-            _, _, h, w = self.output.size()
+            _, _, height, width = self.output.size()
             self.output = self.output[:, :,
-                                      0:h - self.pad * self.scale,
-                                      0:w - self.pad * self.scale]
+                                      0:height - self.pad * self.scale,
+                                      0:width - self.pad * self.scale]
 
         logger.debug(f"Post-processing completed. Final output shape: {self.output.shape}")
         return self.output
@@ -237,9 +237,10 @@ class RESRGANinf:
             output_alpha = np.transpose(output_alpha[[2, 1, 0], :, :], (1, 2, 0))
             output_alpha = cv2.cvtColor(output_alpha, cv2.COLOR_BGR2GRAY)
         else:
-            h, w = alpha.shape[0:2]
+            height, width = alpha.shape[0:2]
             output_alpha = cv2.resize(
-                alpha, (w * self.scale, h * self.scale), interpolation=cv2.INTER_LINEAR
+                alpha, (width * self.scale, height * self.scale),
+                interpolation=cv2.INTER_LINEAR,
             )
         return output_alpha
 
@@ -253,8 +254,8 @@ class RESRGANinf:
         return cv2.resize(
             output, (
                 int(w_input_img * outscale),
-                int(h_input_img * outscale)
-            ), interpolation=cv2.INTER_LANCZOS4
+                int(h_input_img * outscale),
+            ), interpolation=cv2.INTER_LANCZOS4,
         )
 
     @torch.no_grad()

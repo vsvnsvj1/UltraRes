@@ -1,6 +1,6 @@
 import torch
 from torch import nn as nn
-from torch.nn import functional as F
+from torch.nn import functional
 
 
 class ResidualDenseBlock(nn.Module):
@@ -23,13 +23,13 @@ class ResidualDenseBlock(nn.Module):
 
         self.lrelu = nn.LeakyReLU(negative_slope=0.2, inplace=True)
 
-    def forward(self, x):
-        x1 = self.lrelu(self.conv1(x))
-        x2 = self.lrelu(self.conv2(torch.cat((x, x1), 1)))
-        x3 = self.lrelu(self.conv3(torch.cat((x, x1, x2), 1)))
-        x4 = self.lrelu(self.conv4(torch.cat((x, x1, x2, x3), 1)))
-        x5 = self.conv5(torch.cat((x, x1, x2, x3, x4), 1))
-        return x5 * 0.2 + x
+    def forward(self, input_tensor):
+        x1 = self.lrelu(self.conv1(input_tensor))
+        x2 = self.lrelu(self.conv2(torch.cat((input_tensor, x1), 1)))
+        x3 = self.lrelu(self.conv3(torch.cat((input_tensor, x1, x2), 1)))
+        x4 = self.lrelu(self.conv4(torch.cat((input_tensor, x1, x2, x3), 1)))
+        x5 = self.conv5(torch.cat((input_tensor, x1, x2, x3, x4), 1))
+        return x5 * 0.2 + input_tensor
 
 
 class RRDB(nn.Module):
@@ -48,11 +48,11 @@ class RRDB(nn.Module):
         self.rdb2 = ResidualDenseBlock(num_feat, num_grow_ch)
         self.rdb3 = ResidualDenseBlock(num_feat, num_grow_ch)
 
-    def forward(self, x):
-        out = self.rdb1(x)
+    def forward(self, input_tensor):
+        out = self.rdb1(input_tensor)
         out = self.rdb2(out)
         out = self.rdb3(out)
-        return out * 0.2 + x
+        return out * 0.2 + input_tensor
 
 
 class RRDBNet(nn.Module):
@@ -111,36 +111,52 @@ class RRDBNet(nn.Module):
         return nn.Sequential(*layers)
 
     @staticmethod
-    def pixel_unshuffle(x, scale):
+    def pixel_unshuffle(input_tensor, scale):
         """ Pixel unshuffle.
 
         Args:
-            x (Tensor): Input feature with shape (b, c, hh, hw).
+            input_tensor (Tensor): Input feature with shape (b, c, hh, hw).
             scale (int): Downsample ratio.
 
         Returns:
             Tensor: the pixel unshuffled feature.
         """
-        b, c, hh, hw = x.size()
-        out_channel = c * (scale**2)
+        batch_size, channel_size, hh, hw = input_tensor.size()
+        out_channel = channel_size * (scale**2)
         assert hh % scale == 0 and hw % scale == 0
-        h = hh // scale
-        w = hw // scale
-        x_view = x.view(b, c, h, scale, w, scale)
-        return x_view.permute(0, 1, 3, 5, 2, 4).reshape(b, out_channel, h, w)
+        height = hh // scale
+        width = hw // scale
+        x_view = input_tensor.view(batch_size, channel_size, height, scale, width, scale)
+        return x_view.permute(0, 1, 3, 5, 2, 4).reshape(batch_size, out_channel, height, width)
 
-    def forward(self, x):
+    def forward(self, input_tensor):
         if self.scale == 2:
-            feat = self.pixel_unshuffle(x, scale=2)
+            feat = self.pixel_unshuffle(input_tensor, scale=2)
         elif self.scale == 1:
-            feat = self.pixel_unshuffle(x, scale=4)
+            feat = self.pixel_unshuffle(input_tensor, scale=4)
         else:
-            feat = x
+            feat = input_tensor
         feat = self.conv_first(feat)
         body_feat = self.conv_body(self.body(feat))
         feat = feat + body_feat
         # upsample
-        feat = self.lrelu(self.conv_up1(F.interpolate(feat, scale_factor=2, mode='nearest')))
-        feat = self.lrelu(self.conv_up2(F.interpolate(feat, scale_factor=2, mode='nearest')))
+        feat = self.lrelu(
+            self.conv_up1(
+                functional.interpolate(
+                    feat,
+                    scale_factor=2,
+                    mode='nearest',
+                    ),
+                ),
+            )
+        feat = self.lrelu(
+            self.conv_up2(
+                functional.interpolate(
+                    feat,
+                    scale_factor=2,
+                    mode='nearest',
+                    ),
+                ),
+            )
         out = self.conv_last(self.lrelu(self.conv_hr(feat)))
         return out

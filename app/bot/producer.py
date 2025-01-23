@@ -1,23 +1,15 @@
-import aio_pika
 import json
-from typing import Optional
 import logging
 import os
 from datetime import datetime
+from typing import Optional
+
+import aio_pika
 from aiogram import Bot
-from config import (
-    RABBITMQ_HOST,
-    RABBITMQ_PORT,
-    RABBITMQ_USER,
-    RABBITMQ_PASSWORD,
-    RABBITMQ_VHOST,
-    QUEUE_PROCESS_IMAGE,
-    QUEUE_RESULT,
-    UPLOAD_DIR,
-    RESULT_DIR,
-    DEBUG
-)
 from aiogram.types import BufferedInputFile
+from config import (DEBUG, QUEUE_PROCESS_IMAGE, QUEUE_RESULT, RABBITMQ_HOST,
+                    RABBITMQ_PASSWORD, RABBITMQ_PORT, RABBITMQ_USER,
+                    RABBITMQ_VHOST, RESULT_DIR, UPLOAD_DIR)
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +62,7 @@ class ImageProducer:
                 port=RABBITMQ_PORT,
                 login=RABBITMQ_USER,
                 password=RABBITMQ_PASSWORD,
-                virtualhost=RABBITMQ_VHOST
+                virtualhost=RABBITMQ_VHOST,
             )
             self.channel = await self.connection.channel()
             logger.info("Подключение к RabbitMQ установлено")
@@ -103,7 +95,7 @@ class ImageProducer:
         await self._save_image_to_dir(
             image_bytes,
             chat_id,
-            UPLOAD_DIR
+            UPLOAD_DIR,
             )
 
         try:
@@ -112,15 +104,15 @@ class ImageProducer:
 
             message = {
                 "chat_id": chat_id,
-                "image_data": image_bytes.hex()
+                "image_data": image_bytes.hex(),
             }
 
             await self.channel.default_exchange.publish(
                 aio_pika.Message(
                     body=json.dumps(message).encode(),
-                    delivery_mode=aio_pika.DeliveryMode.PERSISTENT
+                    delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
                 ),
-                routing_key=self.queue_process
+                routing_key=self.queue_process,
             )
 
             logger.info(f"Изображение отправлено в очередь для чата {chat_id}")
@@ -139,7 +131,7 @@ class ImageProducer:
             await self._save_image_to_dir(
                 processed_image,
                 chat_id,
-                RESULT_DIR
+                RESULT_DIR,
                 )
             await self._send_image_to_chat(chat_id, processed_image)
 

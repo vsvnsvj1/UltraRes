@@ -1,25 +1,20 @@
 import asyncio
-import aio_pika
-import cv2
 import json
 import logging
+
+import aio_pika
+import cv2
 import numpy as np
+
 from app.model.model import RRDBNet
 from app.model.real_esrgan_inference import RESRGANinf
-from config import (
-    RABBITMQ_HOST,
-    RABBITMQ_PORT,
-    RABBITMQ_USER,
-    RABBITMQ_PASSWORD,
-    RABBITMQ_VHOST,
-    QUEUE_PROCESS_IMAGE,
-    QUEUE_RESULT,
-    LOG_LEVEL
-)
+from config import (LOG_LEVEL, QUEUE_PROCESS_IMAGE, QUEUE_RESULT,
+                    RABBITMQ_HOST, RABBITMQ_PASSWORD, RABBITMQ_PORT,
+                    RABBITMQ_USER, RABBITMQ_VHOST)
 
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
 )
 logger = logging.getLogger(__name__)
 
@@ -31,17 +26,16 @@ async def load_model(device=None):
     """
     Загружает модель для обработки изображений.
     """
-    MODEL_PATH = 'app/model/RealESRGAN_x4plus.pth'
     logger.info("Загрузка модели Real-ESRGAN...")
     model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=4)
     upsmpl = RESRGANinf(
         scale=4,
         model=model,
-        model_path=MODEL_PATH,
+        model_path='app/model/RealESRGAN_x4plus.pth',
         device=device,
         calc_tiles=True,
         tile_pad=10,
-        pad=10
+        pad=10,
         )
     logger.info("Модель успешно загружена.")
     return upsmpl
@@ -184,7 +178,7 @@ async def main():
                     model,
                     connection,
                     output_queue_name,
-                    )
+                    ),
                 )
 
             logger.info("Сервис обработки изображений запущен и ожидает сообщений.")
