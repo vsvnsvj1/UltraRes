@@ -22,16 +22,9 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
-'''
-# Настройка логгирования
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.StreamHandler()]
-)
-logger = logging.getLogger(__name__)
-'''
 
+SEMAPHORE_LIMIT = 2  # Максимальное количество параллельных задач
+semaphore = asyncio.Semaphore(SEMAPHORE_LIMIT)
 
 async def load_model(device=None):
     """
@@ -53,17 +46,12 @@ async def process_image(image_bytes, model):
         model (RESRGANinf): Объект модели для обработки.
     
     Returns:
-        bytes: Обработанное изображение в формате JPEG.
+        bytes: Обработанное изображение в байтах.
     """
     logger.info("Начало обработки изображения.")
-    # Декодируем изображение из байтов
+    
     np_image = np.frombuffer(image_bytes, np.uint8)
     img = cv2.imdecode(np_image, cv2.IMREAD_COLOR)
-    
-    import os
-    save_path = os.path.join('results/', f'{'imgname'}.{'jpg'}')
-    cv2.imwrite(save_path, img)
-    
     
     if img is None:
         logger.error("Ошибка: не удалось декодировать изображение.")
@@ -78,63 +66,115 @@ async def process_image(image_bytes, model):
     logger.info("Обработка изображения завершена.")
     return encoded_image.tobytes()
 
+async def publish_with_retry(connection, message, routing_key, retries=3):
+    """
+    Публикует сообщение в очередь с повторными попытками.
+    """
+    for attempt in range(retries):
+        try:
+            async with connection.channel() as channel:
+                await channel.default_exchange.publish(
+                    message,
+                    routing_key=routing_key,
+                )
+                logger.info("Сообщение успешно опубликовано.")
+                return
+        except Exception as e:
+            logger.error(f"Попытка {attempt + 1} не удалась: {e}")
+            if attempt < retries - 1:
+                await asyncio.sleep(2 ** attempt)  # Экспоненциальная задержка
+            else:
+                raise
+
+async def handle_message(message: aio_pika.IncomingMessage, model, connection, output_queue_name):
+    """
+    Обрабатывает сообщение из очереди RabbitMQ.
+
+    Args:
+        message (aio_pika.IncomingMessage): Входящее сообщение из RabbitMQ.
+        model: Объект модели для обработки изображений.
+        connection: Соединение RabbitMQ для публикации сообщений.
+        output_queue_name (str): Имя очереди для отправки результата.
+    """
+    async with semaphore:
+        async with message.process():
+            try:
+                logger.info("Получено сообщение из очереди.")
+                # Декодируем сообщение
+                msg = json.loads(message.body)
+                image_hex = msg.get("image_data")
+
+                if not image_hex:
+                    logger.error("Ошибка: получены пустые данные изображения.")
+                    raise ValueError("Получены пустые данные изображения.")
+
+                # Декодируем байты изображения
+                image_bytes = bytes.fromhex(image_hex)
+
+                # Обработка изображения
+                logger.info("Начинается обработка изображения...")
+                processed_image = await process_image(image_bytes, model)
+            
+                # Создаём сообщение
+                message_to_publish = aio_pika.Message(
+                    body=processed_image,
+                    headers={"chat_id": msg["chat_id"]},
+                    delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
+                )
+
+                # Публикация с повторными попытками
+                await publish_with_retry(connection, message_to_publish, output_queue_name)
+            except Exception as e:
+                logger.error(f"Ошибка при обработке сообщения: {e}", exc_info=True)
+                await message.reject(requeue=False)  # Отклоняем сообщение без повторной отправки
+
+   
+            
 async def main():
     """
     Основная функция, запускающая обработку изображений через очередь.
     """
     logger.info("Инициализация сервиса обработки изображений.")
     model = await load_model()
+    
     logger.info("Подключение к RabbitMQ...")
     connection = await aio_pika.connect_robust(
         f"amqp://{RABBITMQ_USER}:{RABBITMQ_PASSWORD}@{RABBITMQ_HOST}:{RABBITMQ_PORT}/{RABBITMQ_VHOST}",
         client_properties={
-            "connection_timeout": 300,  # Увеличенный тайм-аут соединения
-            "heartbeat": 120,           # Увеличенный heartbeat
+            "connection_timeout": 300,  
+            "heartbeat": 600,          
         },
     )
-    async with connection:
-        logger.info("Подключение к RabbitMQ успешно установлено.")
-        channel = await connection.channel(publisher_confirms=True)
+    
+    try:
+        async with connection:
+            logger.info("Подключение к RabbitMQ успешно установлено.")
+            channel = await connection.channel(publisher_confirms=True)
 
-        # Объявление очередей
-        input_queue = await channel.declare_queue(QUEUE_PROCESS_IMAGE, durable=True)
-        output_queue_name = QUEUE_RESULT
+            # Объявление очередей
+            input_queue = await channel.declare_queue(QUEUE_PROCESS_IMAGE, durable=True)
+            output_queue_name = QUEUE_RESULT
+            
+            # Устанавливаем prefetch_count
+            await channel.set_qos(prefetch_count=SEMAPHORE_LIMIT)
+            
+            # Привязываем обработчик сообщений
+            await input_queue.consume(lambda msg: handle_message(msg, model, connection, output_queue_name))
+            
+            logger.info("Сервис обработки изображений запущен и ожидает сообщений.")
+            await asyncio.Future()  # Бесконечное ожидаение сообщений
+    except asyncio.CancelledError:
+        logger.info("Получен сигнал завершения работы.")
+    except Exception as e:
+        logger.error(f"Критическая ошибка: {e}", exc_info=True)
+    finally:
+        # Корректное закрытие соединения
+        if not connection.is_closed:
+            await connection.close()
+            logger.info("Соединение с RabbitMQ закрыто.")
 
-        async def on_message(message: aio_pika.IncomingMessage):
-            async with message.process():
-                try:
-                    logger.info("Получено сообщение из очереди.")
-                    # Декодируем сообщение
-                    msg = json.loads(message.body)
-                    image_hex = msg.get("image_data")
 
-                    if not image_hex:
-                        logger.error("Ошибка: получены пустые данные изображения.")
-                        raise ValueError("Получены пустые данные изображения.")
-
-                    # Декодируем байты изображения
-                    image_bytes = bytes.fromhex(image_hex)
-
-                    # Обработка изображения
-                    logger.info("Начинается обработка изображения...")
-                    processed_image = await process_image(image_bytes, model)
-                   
-                    # Публикация обработанного изображения в другую очередь
-                    await channel.default_exchange.publish(
-                        aio_pika.Message(
-                            body=processed_image,
-                            headers={"chat_id": msg["chat_id"]},
-                            delivery_mode=aio_pika.DeliveryMode.PERSISTENT
-                        ),
-                        routing_key=output_queue_name,
-                    )
-                    logger.info("Изображение успешно обработано и отправлено в выходную очередь.")
-                except Exception as e:
-                    logger.error(f"Ошибка при обработке сообщения: {e}",exc_info=True)
-
-        await input_queue.consume(on_message)
-        logger.info("Сервис обработки изображений запущен и ожидает сообщений.")
-        await asyncio.Future()  # Для ожидания новых сообщений
+       
 
 if __name__ == "__main__":
     try:

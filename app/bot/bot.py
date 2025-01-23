@@ -2,6 +2,7 @@ from aiogram import Bot, Dispatcher, types, F
 from aiogram.types import ContentType
 from aiogram.filters import Command
 import asyncio
+import signal
 import os
 import logging
 from config import TELEGRAM_BOT_TOKEN, UPLOAD_DIR, DEBUG, LOG_LEVEL
@@ -19,7 +20,6 @@ logger = logging.getLogger(__name__)
 # Инициализация бота и диспетчера
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
 dp = Dispatcher()
-
 # Иницилизация продюсера
 producer = ImageProducer(bot)
 
@@ -89,15 +89,20 @@ async def handle_unknown(message: types.Message):
     )
 
 async def main():
-    os.makedirs(UPLOAD_DIR, exist_ok=True)
+
     await producer.connect()
     # Запускаем подписку на результаты
     asyncio.create_task(producer.process_result())
     await dp.start_polling(bot)
 
+   
+
 if __name__ == '__main__':
     try:
         asyncio.run(main())
+    except asyncio.CancelledError:
+        producer.close()
+        logger.info("Получен сигнал завершения работы.")
     except KeyboardInterrupt:
         producer.close()
         logger.info("Получен KeyboardInterrupt")

@@ -13,7 +13,6 @@ from config import (
     QUEUE_PROCESS_IMAGE,
     QUEUE_RESULT
 )
-from io import BytesIO
 from aiogram.types import BufferedInputFile
 logger = logging.getLogger(__name__)
 
@@ -58,28 +57,6 @@ class ImageProducer:
         except Exception as e:
             logger.error(f"Ошибка при закрытии соединения с RabbitMQ: {e}")
 
-            
-        '''
-        try:
-            # Останавливаем получение сообщений
-            self._consuming = False
-            
-            if self._consume_task:
-                try:
-                    await asyncio.wait_for(self._consume_task, timeout=5.0)
-                except asyncio.TimeoutError:
-                    self._consume_task.cancel()
-                    
-            if self.channel and not self.channel.is_closed:
-                await self.channel.close()
-                
-            if self.connection and not self.connection.is_closed:
-                await self.connection.close()
-                
-            logger.info("Соединение с RabbitMQ корректно закрыто")
-        except Exception as e:
-            logger.error(f"Ошибка при закрытии соединения с RabbitMQ: {e}")
-        '''
     
     async def send_image(self, image_bytes: str, chat_id: int) -> None:
         """
@@ -121,20 +98,31 @@ class ImageProducer:
         
         queue = await self.channel.declare_queue(self.queue_result, durable=True)
         logger.info("Подписан на очередь результатов")
-        async for message in queue:
-            async with message.process():
-                try:
-                    chat_id = message.headers.get("chat_id")
-                    if not chat_id:
-                        raise ValueError("Отсутствует chat_id в заголовках.")
-                    
-                    processed_image = message.body
-                    image_file = BufferedInputFile(processed_image, filename="processed_image.jpg")
-                    await self.bot.send_photo(chat_id=chat_id, photo=image_file, caption="Вот ваше обработанное изображение!")
-                    logger.info(f"Изображение успешно отправлено в чат {chat_id}")
-                except Exception as e:
-                    logger.error(f"Ошибка при обработке результата: {e}")
-
+        
+        try:
+            async with queue.iterator() as queue_iter:
+                async for message in queue_iter:
+                    async with message.process():
+                        try:
+                            chat_id = message.headers.get("chat_id")
+                            if not chat_id:
+                                raise ValueError("Отсутствует chat_id в заголовках.")
+                            
+                            processed_image = message.body
+                            image_file = BufferedInputFile(processed_image, filename="processed_image.jpg")
+                            await self.bot.send_photo(chat_id=chat_id, photo=image_file, caption="Вот ваше обработанное изображение!")
+                            logger.info(f"Изображение успешно отправлено в чат {chat_id}")
+                        except Exception as e:
+                            logger.error(f"Ошибка при обработке результата: {e}")
+        except asyncio.CancelledError:
+            logger.info("Обработка очереди остановлена из-за завершения работы.")
+        except Exception as e:
+            if isinstance(e, aio_pika.exceptions.ChannelInvalidStateError):
+                logger.warning("Канал был закрыт до завершения обработки.")
+            else:
+                logger.error(f"Ошибка при обработке результата: {e}")
+        finally:
+            logger.info("Завершение обработки результатов.")
 
     async def start_consuming(self):
         """
@@ -144,4 +132,7 @@ class ImageProducer:
             await self.process_result()
         except Exception as e:
             logger.error(f"Ошибка при подписке на очередь: {e}")
-            
+        finally:
+            await self.close()
+    
+    
