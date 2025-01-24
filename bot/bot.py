@@ -4,7 +4,7 @@ from aiogram import Dispatcher, Router
 from aiogram_dialog import setup_dialogs
 
 from bot.config import get_config
-from bot.misc import bot, dp
+from bot.misc import bot, dp, rabbit_manager
 from bot.handlers import all_routers
 from bot.utils import setup_logging
 
@@ -30,5 +30,9 @@ async def setup_dispatcher(dp: Dispatcher):
 
 
 async def start_pooling():
-    await setup_dispatcher(dp)
-    await dp.start_polling(bot, skip_updates=True)
+    await rabbit_manager.connect()
+    try:
+        await setup_dispatcher(dp)
+        await dp.start_polling(bot, skip_updates=True)
+    finally:
+        await rabbit_manager.close()

@@ -1,37 +1,22 @@
-import json
-import logging
-import os
-from datetime import datetime
-from typing import Optional
-
+from aio_pika import connect_robust, Connection, Channel
 import aio_pika
-from aiogram import Bot
-from aiogram.types import BufferedInputFile
-from config import (
-    DEBUG,
-    QUEUE_PROCESS_IMAGE,
-    QUEUE_RESULT,
-    RABBITMQ_HOST,
-    RABBITMQ_PASSWORD,
-    RABBITMQ_PORT,
-    RABBITMQ_USER,
-    RABBITMQ_VHOST,
-    RESULT_DIR,
-    UPLOAD_DIR,
-)
+import json
+import os
+import datetime
+import logging
+from bot.config import get_config
+
+config = get_config()
 
 logger = logging.getLogger(__name__)
 
 
-class ImageProducer:
-    def __init__(self, bot: Bot):
-        self.connection: Optional[aio_pika.Connection] = None
-        self.channel = None
-        self.queue_process = QUEUE_PROCESS_IMAGE
-        self.queue_result = QUEUE_RESULT
-        self.bot = bot
-        self._consuming = False
-        self._consume_task = None
+class RabbitManager:
+    def __init__(self, rabbitmq_dsn: str):
+        self.rabbitmq_dsn = rabbitmq_dsn
+        self.connection: Connection | None = None
+        self.channel: Channel | None = None
+        self.response_futures = {}
 
     @staticmethod
     async def _save_image_to_dir(
@@ -50,7 +35,7 @@ class ImageProducer:
         Returns:
             str: Путь к сохраненному файлу.
         """
-        if not DEBUG:
+        if not config.DEBUG:
             return None
 
         os.makedirs(dir_name, exist_ok=True)
@@ -61,23 +46,14 @@ class ImageProducer:
         logger.debug(f"Изображение сохранено в {file_path}")
         return file_path
 
-    async def connect(self) -> None:
-        """
-        Устанавливает соединение с RabbitMQ.
-        """
-        try:
-            self.connection = await aio_pika.connect_robust(
-                host=RABBITMQ_HOST,
-                port=RABBITMQ_PORT,
-                login=RABBITMQ_USER,
-                password=RABBITMQ_PASSWORD,
-                virtualhost=RABBITMQ_VHOST,
-            )
-            self.channel = await self.connection.channel()
-            logger.info("Подключение к RabbitMQ установлено")
-        except Exception as e:
-            logger.error(f"Ошибка при подключении к RabbitMQ: {e}")
-            raise e
+    async def connect(self):
+        self.connection = await connect_robust(self.rabbitmq_dsn)
+        self.channel = await self.connection.channel()
+
+        response_queue = await self.channel.declare_queue(
+            "response_queue", durable=True,
+        )
+        await response_queue.consume(self._on_response)
 
     async def close(self) -> None:
         """
@@ -92,39 +68,20 @@ class ImageProducer:
         except Exception as e:
             logger.error(f"Ошибка при закрытии соединения с RabbitMQ: {e}")
 
-    async def send_image(self, image_bytes: str, chat_id: int) -> None:
-        """
-        Отправляет байтовое изображение в очередь RabbitMQ.
-
-        Args:
-            image_bytes (bytes): Байты изображения.
-            chat_id (int): ID чата для отправки результата.
-        """
-
-        await self._save_image_to_dir(
-            image_bytes,
-            chat_id,
-            UPLOAD_DIR,
-        )
-
+    async def send_json_to_queue(self, json_message):
         try:
             if not self.channel:
                 raise ConnectionError("Канал RabbitMQ не установлен.")
 
-            message = {
-                "chat_id": chat_id,
-                "image_data": image_bytes.hex(),
-            }
-
             await self.channel.default_exchange.publish(
                 aio_pika.Message(
-                    body=json.dumps(message).encode(),
+                    body=json.dumps(json_message).encode(),
                     delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
                 ),
                 routing_key=self.queue_process,
             )
 
-            logger.info(f"Изображение отправлено в очередь для чата {chat_id}")
+            logger.info("Изображение отправлено в очередь")
         except Exception as e:
             logger.error(f"Ошибка отправки изображения в очередь: {e}")
             raise e
@@ -140,33 +97,13 @@ class ImageProducer:
             await self._save_image_to_dir(
                 processed_image,
                 chat_id,
-                RESULT_DIR,
+                config.RESULT_DIR,
             )
             await self._send_image_to_chat(chat_id, processed_image)
 
             logger.info(f"Изображение успешно отправлено в чат {chat_id}")
         except Exception as e:
             logger.error(f"Ошибка при обработке сообщения: {e}")
-
-    def _extract_chat_id(self, message) -> str:
-        """
-        Извлекает chat_id из заголовков сообщения.
-        """
-        chat_id = message.headers.get("chat_id")
-        if not chat_id:
-            raise ValueError("Отсутствует chat_id в заголовках.")
-        return chat_id
-
-    async def _send_image_to_chat(self, chat_id: str, image: bytes) -> None:
-        """
-        Отправляет изображение в чат.
-        """
-        image_file = BufferedInputFile(image, filename="processed_image.jpg")
-        await self.bot.send_photo(
-            chat_id=chat_id,
-            photo=image_file,
-            caption="Вот ваше обработанное изображение!",
-        )
 
     async def process_result(self) -> None:
         """
