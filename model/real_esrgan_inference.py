@@ -3,7 +3,7 @@ import logging
 import cv2
 import numpy as np
 import torch
-from app.model.memory_manager import MemoryManager
+from model.memory_manager import MemoryManager
 from torch.nn import functional
 
 logger = logging.getLogger(__name__)
@@ -177,7 +177,8 @@ class RESRGANinf:
         if self.pad != 0:
             _, _, height, width = self.output.size()
             self.output = self.output[
-                :, :, 0 : height - self.pad * self.scale, 0 : width - self.pad * self.scale
+                :, :,
+                0 : height - self.pad * self.scale, 0 : width - self.pad * self.scale,
             ]
 
         logger.debug(f"Post-processing completed. Final output shape: {self.output.shape}")
