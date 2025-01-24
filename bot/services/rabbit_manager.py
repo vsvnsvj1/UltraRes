@@ -1,10 +1,15 @@
-from aio_pika import connect_robust, Connection, Channel
-import aio_pika
 import json
-import os
-import datetime
 import logging
+import os
+from datetime import datetime
+
+import aio_pika
+from aio_pika import Channel, Connection, connect_robust
+from aiogram import Bot
+from aiogram.types import BufferedInputFile
+
 from bot.config import get_config
+from bot.scripts.message_scripts import extract_chat_id
 
 config = get_config()
 
@@ -12,11 +17,11 @@ logger = logging.getLogger(__name__)
 
 
 class RabbitManager:
-    def __init__(self, rabbitmq_dsn: str):
+    def __init__(self, rabbitmq_dsn: str, bot: Bot):
         self.rabbitmq_dsn = rabbitmq_dsn
         self.connection: Connection | None = None
         self.channel: Channel | None = None
-        self.response_futures = {}
+        self.bot = bot
 
     @staticmethod
     async def _save_image_to_dir(
@@ -50,11 +55,6 @@ class RabbitManager:
         self.connection = await connect_robust(self.rabbitmq_dsn)
         self.channel = await self.connection.channel()
 
-        response_queue = await self.channel.declare_queue(
-            "response_queue", durable=True,
-        )
-        await response_queue.consume(self._on_response)
-
     async def close(self) -> None:
         """
         Корректное закрытие соединения с RabbitMQ
@@ -78,7 +78,7 @@ class RabbitManager:
                     body=json.dumps(json_message).encode(),
                     delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
                 ),
-                routing_key=self.queue_process,
+                routing_key=config.QUEUE_PROCESS_IMAGE,
             )
 
             logger.info("Изображение отправлено в очередь")
@@ -86,12 +86,23 @@ class RabbitManager:
             logger.error(f"Ошибка отправки изображения в очередь: {e}")
             raise e
 
+    async def send_image_to_chat(self, chat_id: str, image: bytes) -> None:
+        """
+        Отправляет изображение в чат.
+        """
+        image_file = BufferedInputFile(image, filename="processed_image.jpg")
+        await self.bot.send_photo(
+            chat_id=chat_id,
+            photo=image_file,
+            caption="Вот ваше обработанное изображение!",
+        )
+
     async def _process_message(self, message) -> None:
         """
         Обрабатывает одно сообщение из очереди.
         """
         try:
-            chat_id = self._extract_chat_id(message)
+            chat_id = extract_chat_id(message)
             processed_image = message.body
 
             await self._save_image_to_dir(
@@ -99,7 +110,7 @@ class RabbitManager:
                 chat_id,
                 config.RESULT_DIR,
             )
-            await self._send_image_to_chat(chat_id, processed_image)
+            await self.send_image_to_chat(chat_id, processed_image)
 
             logger.info(f"Изображение успешно отправлено в чат {chat_id}")
         except Exception as e:
@@ -112,7 +123,7 @@ class RabbitManager:
         if not self.channel:
             raise ConnectionError("Канал RabbitMQ не установлен.")
 
-        queue = await self.channel.declare_queue(self.queue_result, durable=True)
+        queue = await self.channel.declare_queue(config.QUEUE_RESULT, durable=True)
         logger.info("Подписан на очередь результатов")
 
         try:
@@ -122,14 +133,3 @@ class RabbitManager:
                         await self._process_message(message)
         except Exception as e:
             logger.error(f"Ошибка при обработке очереди: {e}")
-
-    async def start_consuming(self):
-        """
-        Функция подписки на очередь результатов и запуска обработки сообщений.
-        """
-        try:
-            await self.process_result()
-        except Exception as e:
-            logger.error(f"Ошибка при подписке на очередь: {e}")
-        finally:
-            await self.close()

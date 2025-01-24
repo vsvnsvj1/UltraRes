@@ -3,8 +3,8 @@ import logging
 from aiogram import F
 from aiogram import Router, Bot
 from aiogram.types import Message, ContentType
-from misc import rabbit_manager
-from services.message_service import create_json_from_message
+from bot.misc import rabbit_manager
+from bot.scripts.message_scripts import create_json_from_message
 
 from bot.config import get_config
 
@@ -25,9 +25,10 @@ async def handle_photo(message: Message, bot: Bot):
             "📥 Получил ваше изображение. Начинаю обработку...",
         )
 
-        photo_bytes = await bot.download(message.photo[-1]).read()
+        photo_bytes = await bot.download(message.photo[-1])
+        photo_bytes = photo_bytes.read()
 
-        rabbit_manager.send_json_to_queue(
+        await rabbit_manager.send_json_to_queue(
             create_json_from_message(
                 message.from_user.id,
                 photo_bytes,

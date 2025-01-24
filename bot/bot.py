@@ -1,5 +1,6 @@
 import logging
 
+import asyncio
 from aiogram import Dispatcher, Router
 from aiogram_dialog import setup_dialogs
 
@@ -31,6 +32,8 @@ async def setup_dispatcher(dp: Dispatcher):
 
 async def start_pooling():
     await rabbit_manager.connect()
+    asyncio.create_task(rabbit_manager.process_result())
+
     try:
         await setup_dispatcher(dp)
         await dp.start_polling(bot, skip_updates=True)

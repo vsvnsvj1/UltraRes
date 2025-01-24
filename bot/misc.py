@@ -11,4 +11,4 @@ dp = Dispatcher()
 # Bot
 bot = Bot(token=config.TELEGRAM_BOT_TOKEN)
 
-rabbit_manager = RabbitManager(rabbitmq_dsn=config.RABBITMQ_DSN)
+rabbit_manager = RabbitManager(rabbitmq_dsn=str(config.RABBITMQ_DSN), bot=bot)
