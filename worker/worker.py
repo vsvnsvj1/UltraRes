@@ -5,25 +5,15 @@ import logging
 import aio_pika
 import cv2
 import numpy as np
+from model import RESRGANinf, RRDBNet
 
-from app.model.model import RRDBNet
-from app.model.real_esrgan_inference import RESRGANinf
-from config import (
-    LOG_LEVEL,
-    QUEUE_PROCESS_IMAGE,
-    QUEUE_RESULT,
-    RABBITMQ_HOST,
-    RABBITMQ_PASSWORD,
-    RABBITMQ_PORT,
-    RABBITMQ_USER,
-    RABBITMQ_VHOST,
-)
+from worker.config import get_config
+from worker.utils import setup_logging
 
-logging.basicConfig(
-    level=getattr(logging, LOG_LEVEL, logging.INFO),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
+config = get_config()
+setup_logging(config)
 logger = logging.getLogger(__name__)
+
 
 SEMAPHORE_LIMIT = 2  # Максимальное количество параллельных задач
 semaphore = asyncio.Semaphore(SEMAPHORE_LIMIT)
@@ -34,11 +24,18 @@ async def load_model(device=None):
     Загружает модель для обработки изображений.
     """
     logger.info("Загрузка модели Real-ESRGAN...")
-    model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=4)
+    model = RRDBNet(
+        num_in_ch=3,
+        num_out_ch=3,
+        num_feat=64,
+        num_block=23,
+        num_grow_ch=32,
+        scale=4,
+    )
     upsmpl = RESRGANinf(
         scale=4,
         model=model,
-        model_path="app/model/RealESRGAN_x4plus.pth",
+        model_path="model/RealESRGAN_x4plus.pth",
         device=device,
         calc_tiles=True,
         tile_pad=10,
@@ -99,7 +96,12 @@ async def publish_with_retry(connection, message, routing_key, retries=3):
                 raise
 
 
-async def handle_message(message: aio_pika.IncomingMessage, model, connection, output_queue_name):
+async def handle_message(
+    message: aio_pika.IncomingMessage,
+    model,
+    connection,
+    output_queue_name,
+):
     """
     Обрабатывает сообщение из очереди RabbitMQ.
 
@@ -136,10 +138,16 @@ async def handle_message(message: aio_pika.IncomingMessage, model, connection, o
                 )
 
                 # Публикация с повторными попытками
-                await publish_with_retry(connection, message_to_publish, output_queue_name)
+                await publish_with_retry(
+                    connection,
+                    message_to_publish,
+                    output_queue_name,
+                )
             except Exception as e:
                 logger.error(f"Ошибка при обработке сообщения: {e}", exc_info=True)
-                await message.reject(requeue=False)  # Отклоняем сообщение без повторной отправки
+                await message.reject(
+                    requeue=False,
+                )  # Отклоняем сообщение без повторной отправки
 
 
 async def main():
@@ -151,10 +159,7 @@ async def main():
 
     logger.info("Подключение к RabbitMQ...")
 
-    rabbitmq_url = (
-        f"amqp://{RABBITMQ_USER}:{RABBITMQ_PASSWORD}"
-        f"@{RABBITMQ_HOST}:{RABBITMQ_PORT}/{RABBITMQ_VHOST}"
-    )
+    rabbitmq_url = str(config.RABBITMQ_DSN)
 
     client_props = {
         "connection_timeout": 300,  # Время ожидания соединения
@@ -172,8 +177,10 @@ async def main():
             channel = await connection.channel(publisher_confirms=True)
 
             # Объявление очередей
-            input_queue = await channel.declare_queue(QUEUE_PROCESS_IMAGE, durable=True)
-            output_queue_name = QUEUE_RESULT
+            input_queue = await channel.declare_queue(
+                config.QUEUE_PROCESS_IMAGE, durable=True,
+            )
+            output_queue_name = config.QUEUE_RESULT
 
             # Устанавливаем prefetch_count
             await channel.set_qos(prefetch_count=SEMAPHORE_LIMIT)
@@ -199,12 +206,3 @@ async def main():
         if not connection.is_closed:
             await connection.close()
             logger.info("Соединение с RabbitMQ закрыто.")
-
-
-if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logger.info("Сервис обработки изображений остановлен.")
-    except Exception as e:
-        logger.error(f"Критическая ошибка: {e}")
