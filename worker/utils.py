@@ -1,6 +1,6 @@
 import logging
 import sys
-from bot.config import Config
+from worker.config import Config
 
 
 def setup_logging(config: Config) -> None:

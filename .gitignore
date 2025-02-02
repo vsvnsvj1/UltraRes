@@ -1,4 +1,6 @@
 .env
+.env.docker
+.idea/
 venv/
 __pycache__/
 results/

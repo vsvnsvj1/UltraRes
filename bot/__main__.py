@@ -2,7 +2,7 @@ import asyncio
 import logging
 
 from bot.config import get_config
-from bot.bot import start_pooling
+from bot.main import start_pooling
 from bot.utils import setup_logging
 
 config = get_config()

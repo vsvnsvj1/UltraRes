@@ -54,7 +54,7 @@ class RESRGANinf:
             else None
         )
 
-        logger.debug(
+        logger.warning(
             f"Initialized RESRGANinf with scale={self.scale}, device={self.device}, "
             f"calc_tiles={self.calc_tiles}, tile_pad={self.tile_pad}, pad={self.pad}",
         )

@@ -15,7 +15,7 @@ setup_logging(config)
 logger = logging.getLogger(__name__)
 
 
-SEMAPHORE_LIMIT = 2  # Максимальное количество параллельных задач
+SEMAPHORE_LIMIT = 2
 semaphore = asyncio.Semaphore(SEMAPHORE_LIMIT)
 
 
@@ -75,19 +75,18 @@ async def process_image(image_bytes, model):
     return encoded_image.tobytes()
 
 
-async def publish_with_retry(connection, message, routing_key, retries=3):
+async def publish_with_retry(publisher_channel, message, routing_key, retries=3):
     """
     Публикует сообщение в очередь с повторными попытками.
     """
     for attempt in range(retries):
         try:
-            async with connection.channel() as channel:
-                await channel.default_exchange.publish(
-                    message,
-                    routing_key=routing_key,
-                )
-                logger.info("Сообщение успешно опубликовано.")
-                return
+            await publisher_channel.default_exchange.publish(
+                message,
+                routing_key=routing_key,
+            )
+            logger.info("Сообщение успешно опубликовано.")
+            return
         except Exception as e:
             logger.error(f"Попытка {attempt + 1} не удалась: {e}")
             if attempt < retries - 1:
@@ -99,7 +98,7 @@ async def publish_with_retry(connection, message, routing_key, retries=3):
 async def handle_message(
     message: aio_pika.IncomingMessage,
     model,
-    connection,
+    publisher_channel,
     output_queue_name,
 ):
     """
@@ -108,54 +107,62 @@ async def handle_message(
     Args:
         message (aio_pika.IncomingMessage): Входящее сообщение из RabbitMQ.
         model: Объект модели для обработки изображений.
-        connection: Соединение RabbitMQ для публикации сообщений.
+        publisher_channel: Постоянный канал для публикации результата.
         output_queue_name (str): Имя очереди для отправки результата.
     """
     async with semaphore:
-        async with message.process():
-            try:
-                logger.info("Получено сообщение из очереди.")
-                # Декодируем сообщение
-                msg = json.loads(message.body)
-                image_hex = msg.get("image_data")
+        try:
+            logger.info("Получено сообщение из очереди.")
+            # Декодируем сообщение
+            msg = json.loads(message.body)
+            image_hex = msg.get("image_data")
 
-                if not image_hex:
-                    logger.error("Ошибка: получены пустые данные изображения.")
-                    raise ValueError("Получены пустые данные изображения.")
+            if not image_hex:
+                logger.error("Ошибка: получены пустые данные изображения.")
+                raise ValueError("Получены пустые данные изображения.")
 
-                # Декодируем байты изображения
-                image_bytes = bytes.fromhex(image_hex)
+            # Декодируем байты изображения
+            image_bytes = bytes.fromhex(image_hex)
 
-                # Обработка изображения
-                logger.info("Начинается обработка изображения...")
-                processed_image = await process_image(image_bytes, model)
+            # Обработка изображения
+            logger.info("Начинается обработка изображения...")
+            processed_image = await process_image(image_bytes, model)
 
-                # Создаём сообщение
-                message_to_publish = aio_pika.Message(
-                    body=processed_image,
-                    headers={"chat_id": msg["chat_id"]},
-                    delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
-                )
+            # Создаём сообщение
+            message_to_publish = aio_pika.Message(
+                body=processed_image,
+                headers={"chat_id": msg["chat_id"]},
+                delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
+            )
 
-                # Публикация с повторными попытками
-                await publish_with_retry(
-                    connection,
-                    message_to_publish,
-                    output_queue_name,
-                )
-            except Exception as e:
-                logger.error(f"Ошибка при обработке сообщения: {e}", exc_info=True)
-                await message.reject(
-                    requeue=False,
-                )  # Отклоняем сообщение без повторной отправки
+            # Публикация с повторными попытками
+            await publish_with_retry(
+                publisher_channel,
+                message_to_publish,
+                output_queue_name,
+            )
+
+            await message.ack()
+            logger.info("Исходное сообщение подтверждено (ack).")
+        except Exception as e:
+            logger.error(f"Ошибка при обработке сообщения: {e}", exc_info=True)
+            await message.reject(
+                requeue=False,
+            )
 
 
-async def main():
+async def main(device: str = None):
     """
     Основная функция, запускающая обработку изображений через очередь.
     """
     logger.info("Инициализация сервиса обработки изображений.")
-    model = await load_model()
+
+    if device:
+        logger.warning(f"Используется устройство: {device}")
+    else:
+        logger.warning("Устройство не указано, используется значение по умолчанию.")
+
+    model = await load_model(device)
 
     logger.info("Подключение к RabbitMQ...")
 
@@ -175,6 +182,7 @@ async def main():
         async with connection:
             logger.info("Подключение к RabbitMQ успешно установлено.")
             channel = await connection.channel(publisher_confirms=True)
+            publisher_channel = await connection.channel(publisher_confirms=True)
 
             # Объявление очередей
             input_queue = await channel.declare_queue(
@@ -190,7 +198,7 @@ async def main():
                 lambda msg: handle_message(
                     msg,
                     model,
-                    connection,
+                    publisher_channel,
                     output_queue_name,
                 ),
             )
