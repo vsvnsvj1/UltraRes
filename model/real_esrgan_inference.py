@@ -214,12 +214,15 @@ class RESRGANinf:
 
     def _process_image(self):
         batch, channel, height, width = self.img.shape
-        tile_size = self.memory_manager.calculate_tile_count(batch, channel, height, width)
-
-        if self.calc_tiles and tile_size > 1:
-            self.tile_inference(tile_size * 2 if tile_size > 5 else 10)
+        if self.calc_tiles:
+            tile_size = self.memory_manager.calculate_tile_count(batch, channel, height, width)
+            if tile_size > 1:
+                self.tile_inference(tile_size * 2 if tile_size > 5 else 10)
+            else:
+                self.inference()
         else:
             self.inference()
+
 
     def _finalize_image(self, img_mode, max_range, alpha, alpha_upsampler):
         output_img = self.post_process()
