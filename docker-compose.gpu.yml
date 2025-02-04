@@ -1,0 +1,58 @@
+services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    ports:
+      - "${RABBITMQ_PORT}:${RABBITMQ_PORT}"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+    healthcheck:
+      test: [ "CMD", "rabbitmq-diagnostics", "-q", "ping" ]
+      interval: 30s
+      timeout: 50s
+      retries: 3
+      start_period: 10s
+    networks:
+      - app_net
+    env_file:
+      - .env.docker
+
+  bot:
+    build:
+      context: .
+      dockerfile: ./bot/Dockerfile
+    container_name: bot
+    env_file:
+      - .env.docker
+    environment:
+      ENV_FILE_NAME: .env.docker
+    depends_on:
+      rabbitmq:
+       condition: service_healthy
+    networks:
+      - app_net
+
+  worker:
+    build:
+      context: .
+      dockerfile: ./worker/Dockerfile
+    container_name: worker
+    env_file:
+      - .env.docker
+    environment:
+      - ENV_FILE_NAME=.env.docker
+    gpus:
+      - driver: nvidia
+        count: all
+        capabilities:
+          - gpu
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - app_net
+
+networks:
+  app_net:

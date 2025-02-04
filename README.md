@@ -46,6 +46,11 @@ UltraRes — это tg-бот, использующий GAN для улучше�
 1. Убедитесь, что у вас установлен [Docker](https://www.docker.com/) и [Docker Compose](https://docs.docker.com/compose/).
 
 2. Запустите сборку и запуск контейнеров:
+* CPU
    ```bash
    docker compose up --build
+   ```
+* GPU
+   ```bash
+   docker compose -f docker-compose.gpu.yml up --build
    ```
