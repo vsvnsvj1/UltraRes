@@ -1,0 +1,5 @@
+aio_pika==9.5.4
+aiogram==3.17.0
+aiogram_dialog==2.3.1
+pydantic==2.10.6
+pydantic_settings==2.7.1

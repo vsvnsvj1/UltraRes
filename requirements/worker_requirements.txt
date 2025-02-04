@@ -1,0 +1,8 @@
+aio_pika==9.5.4
+numpy==2.2.2
+opencv_python_headless==4.11.0.86
+psutil==6.1.1
+pydantic==2.10.6
+pydantic_settings==2.7.1
+torch==2.5.1
+
